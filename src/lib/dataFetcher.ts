@@ -168,3 +168,29 @@ export function getTrialDaysRemaining(registeredAtISO: string | null): number {
 export function isWithinFreeTrial(registeredAtISO: string | null): boolean {
   return getTrialDaysRemaining(registeredAtISO) > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Anonymous trial tracking
+// ---------------------------------------------------------------------------
+// Visitors get the full 30-day free trial WITHOUT creating an account. The
+// trial clock starts the first time a browser hits the app and is stored in
+// localStorage on that device. Signing in later (magic link) is optional —
+// it's only needed once the trial ends, to unlock ads/payment/subscription
+// paths, or if the person wants their trial tied to an account instead of a
+// single device.
+const ANON_TRIAL_KEY = 'odd_saint_anon_trial_start';
+
+export function getAnonymousTrialStart(): string {
+  const fallback = new Date().toISOString();
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const existing = window.localStorage.getItem(ANON_TRIAL_KEY);
+    if (existing) return existing;
+    window.localStorage.setItem(ANON_TRIAL_KEY, fallback);
+    return fallback;
+  } catch {
+    // localStorage unavailable (e.g. private browsing) — fall back to a
+    // fresh trial each visit rather than blocking access.
+    return fallback;
+  }
+}
