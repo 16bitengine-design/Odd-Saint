@@ -8,9 +8,12 @@ import {
   getTrialDaysRemaining,
   isWithinFreeTrial,
   getAnonymousTrialStart,
+  fetchPerformanceHistory,
+  summarizeHistory,
   type Ticket,
   type Match,
   type MatchStatus,
+  type DayPerformance,
 } from '@/lib/dataFetcher';
 
 // ---------------------------------------------------------------------------
@@ -396,8 +399,26 @@ function TicketCard({
         }}
       >
         <div style={{ textAlign: 'left' }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16.5, fontWeight: 600, color: COLORS.textPrimary }}>
-            {ticket.label}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 16.5, fontWeight: 600, color: COLORS.textPrimary }}>
+              {ticket.label}
+            </div>
+            {ticket.slipLabel && (
+              <span
+                style={{
+                  fontFamily: FONT_BODY,
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  color: COLORS.gold,
+                  background: 'rgba(201,168,119,0.1)',
+                  border: `1px solid ${COLORS.hairline}`,
+                  borderRadius: 999,
+                  padding: '1px 7px',
+                }}
+              >
+                Slip {ticket.slipLabel}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 3 }}>
             {ticket.matchCount} matches · odds {ticket.oddsRange} · total{' '}
@@ -679,6 +700,225 @@ function LoginModal({ onSent, onClose }: { onSent: (email: string) => void; onCl
   );
 }
 
+function Hero({
+  bronzeCount,
+  goldCount,
+  winRatePct,
+  onViewHistory,
+}: {
+  bronzeCount: number;
+  goldCount: number;
+  winRatePct: number | null;
+  onViewHistory: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: 18,
+        border: `1px solid ${COLORS.hairline}`,
+        background: SURFACE_GRADIENT,
+        padding: '30px 22px 26px',
+        marginBottom: 18,
+        textAlign: 'center',
+      }}
+    >
+      {/* Decorative signature motif — concentric arcs suggesting a crest,
+          drawn in inline SVG so there's no external asset to load. */}
+      <svg
+        viewBox="0 0 400 200"
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          top: -40,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 480,
+          height: 240,
+          opacity: 0.35,
+          pointerEvents: 'none',
+        }}
+      >
+        <defs>
+          <linearGradient id="heroArc" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={COLORS.gold} />
+            <stop offset="100%" stopColor={COLORS.emerald} />
+          </linearGradient>
+        </defs>
+        <circle cx="200" cy="170" r="150" fill="none" stroke="url(#heroArc)" strokeWidth="1" />
+        <circle cx="200" cy="170" r="118" fill="none" stroke="url(#heroArc)" strokeWidth="1" opacity="0.7" />
+        <circle cx="200" cy="170" r="86" fill="none" stroke="url(#heroArc)" strokeWidth="1" opacity="0.45" />
+      </svg>
+
+      <div style={{ position: 'relative' }}>
+        <div
+          style={{
+            fontFamily: FONT_BODY,
+            fontSize: 10.5,
+            fontWeight: 600,
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            color: COLORS.gold,
+            marginBottom: 10,
+          }}
+        >
+          Today's Slate
+        </div>
+        <h1
+          style={{
+            fontFamily: FONT_DISPLAY,
+            fontWeight: 600,
+            fontSize: 27,
+            lineHeight: 1.15,
+            color: COLORS.textPrimary,
+            margin: '0 0 10px',
+            letterSpacing: '0.005em',
+          }}
+        >
+          Curated tickets,
+          <br />
+          graded in the open.
+        </h1>
+        <p
+          style={{
+            fontFamily: FONT_BODY,
+            fontSize: 13,
+            color: COLORS.textMuted,
+            maxWidth: 340,
+            margin: '0 auto 20px',
+            lineHeight: 1.55,
+          }}
+        >
+          Fresh Bronze and Gold slips drop daily, backed by an AI confidence
+          index — never a guarantee.
+        </p>
+
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            marginBottom: 6,
+          }}
+        >
+          {[
+            { label: 'Bronze slips today', value: String(bronzeCount) },
+            { label: 'Gold slips today', value: String(goldCount) },
+            {
+              label: '14-day win rate',
+              value: winRatePct !== null ? `${winRatePct}%` : '—',
+            },
+          ].map((stat) => (
+            <div
+              key={stat.label}
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 10,
+                padding: '8px 14px',
+                minWidth: 96,
+              }}
+            >
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 600, color: COLORS.gold }}>
+                {stat.value}
+              </div>
+              <div style={{ fontSize: 9.5, color: COLORS.textMuted, marginTop: 2, lineHeight: 1.3 }}>
+                {stat.label}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={onViewHistory}
+          style={{
+            marginTop: 12,
+            background: 'none',
+            border: 'none',
+            color: COLORS.emerald,
+            fontFamily: FONT_BODY,
+            fontSize: 11.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            textUnderlineOffset: 3,
+          }}
+        >
+          View performance history →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PerformanceHistory({ history }: { history: DayPerformance[] }) {
+  if (history.length === 0) return null;
+  return (
+    <div
+      style={{
+        background: COLORS.surfaceAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderTop: `1px solid ${COLORS.hairline}`,
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 16,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: FONT_DISPLAY,
+          fontSize: 14,
+          fontWeight: 600,
+          color: COLORS.textPrimary,
+          marginBottom: 10,
+        }}
+      >
+        Last {history.length} days
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {history.map((day) => {
+          const decided = day.won + day.failed;
+          const wonPct = decided > 0 ? (day.won / decided) * 100 : 0;
+          return (
+            <div key={day.date} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 74, fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>
+                {day.date.slice(5)}
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  height: 8,
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.05)',
+                  overflow: 'hidden',
+                  display: 'flex',
+                }}
+              >
+                {decided > 0 && (
+                  <div
+                    style={{
+                      width: `${wonPct}%`,
+                      background: `linear-gradient(90deg, ${COLORS.emerald}, ${COLORS.gold})`,
+                    }}
+                  />
+                )}
+              </div>
+              <div style={{ width: 78, fontSize: 10.5, color: COLORS.textMuted, textAlign: 'right', flexShrink: 0 }}>
+                {day.winRatePct !== null ? `${day.winRatePct}% · ${day.ticketsGenerated}` : `${day.ticketsGenerated} live`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 10, lineHeight: 1.5 }}>
+        Win rate = won ÷ (won + failed) among that day's tickets. Ticket count shown after the dot.
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
@@ -689,6 +929,8 @@ export default function Page() {
   const [anonTrialStart, setAnonTrialStart] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [history, setHistory] = useState<DayPerformance[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [unlocks, setUnlocks] = useState<UnlockMap>({});
   const [adTicketId, setAdTicketId] = useState<string | null>(null);
   const [adReady, setAdReady] = useState(false);
@@ -725,6 +967,7 @@ export default function Page() {
 
   useEffect(() => {
     fetchTickets().then(setTickets);
+    fetchPerformanceHistory(14).then(setHistory);
   }, []);
 
   // Logged-in users get their trial tied to their account (registeredAt);
@@ -778,12 +1021,18 @@ export default function Page() {
     );
   }
 
-  // Interleave an in-feed ad slot between the Bronze and Gold tickets.
+  // Interleave a single in-feed ad slot right after the Bronze slips end
+  // (there are now 5 of them) and before Gold begins.
   const feedItems: Array<{ kind: 'ticket'; ticket: Ticket } | { kind: 'ad' }> = [];
-  tickets.forEach((t) => {
+  const lastBronzeIndex = tickets.map((t) => t.tier).lastIndexOf('bronze');
+  tickets.forEach((t, idx) => {
     feedItems.push({ kind: 'ticket', ticket: t });
-    if (t.tier === 'bronze') feedItems.push({ kind: 'ad' });
+    if (idx === lastBronzeIndex && lastBronzeIndex !== -1) feedItems.push({ kind: 'ad' });
   });
+
+  const historySummary = summarizeHistory(history);
+  const bronzeCountToday = tickets.filter((t) => t.tier === 'bronze').length;
+  const goldCountToday = tickets.filter((t) => t.tier === 'gold').length;
 
   return (
     <div style={{ minHeight: '100vh', background: COLORS.bg, color: COLORS.textPrimary, paddingBottom: 76 }}>
@@ -840,6 +1089,15 @@ export default function Page() {
       </div>
 
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px' }}>
+        <Hero
+          bronzeCount={bronzeCountToday}
+          goldCount={goldCountToday}
+          winRatePct={historySummary.winRatePct}
+          onViewHistory={() => setShowHistory((s) => !s)}
+        />
+
+        {showHistory && <PerformanceHistory history={history} />}
+
         {/* Trial banner */}
         <div
           style={{
@@ -907,4 +1165,3 @@ export default function Page() {
     </div>
   );
 }
-
