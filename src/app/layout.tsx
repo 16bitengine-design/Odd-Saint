@@ -34,19 +34,19 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body
         style={{
           margin: 0,
-          background: '#0a0a0a',
+          background: '#f7f2e7',
           fontFamily: 'var(--font-body), system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
         }}
       >
         {/*
           Global styles kept as a plain <style> tag — no CSS-in-JS library,
           no framework, per the "native styling only" brief. This covers the
-          "silk sheen" signature animation shared by the logo mark, ticket
-          card hairlines, and modals, plus a couple of accessibility basics.
+          "silk sheen" signature animation shared by ticket card hairlines
+          and modals, plus a couple of accessibility basics.
         */}
         <style>{`
           * { box-sizing: border-box; }
-          ::selection { background: rgba(16,185,129,0.35); color: #f6f1e7; }
+          ::selection { background: rgba(13,150,104,0.25); color: #231f16; }
 
           @keyframes silkSweep {
             0% { background-position: 0% 0; }
@@ -62,7 +62,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           button:focus-visible,
           input:focus-visible,
           a:focus-visible {
-            outline: 2px solid #10b981;
+            outline: 2px solid #0d9668;
             outline-offset: 2px;
           }
         `}</style>
