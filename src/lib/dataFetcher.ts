@@ -4,13 +4,16 @@
 // functional out of the box, including a rolling performance history —
 // without needing a backend yet. Every ticket is seeded from its calendar
 // date + tier + slip number, so calling the same day twice always returns
-// identical tickets and identical red/green outcomes. That determinism is
-// what lets `fetchPerformanceHistory()` "remember" past days without a
-// database: it just re-derives them from the date.
+// identical tickets and identical outcomes.
 //
-// Swap the functions marked below for real Supabase table queries once your
-// schema is ready — at that point tickets and results should be written
-// once by your grading job and read verbatim, rather than regenerated.
+// IMPORTANT — read before launching to real users:
+// The outcome probabilities and daily slip counts below are PLACEHOLDER
+// constants for demo purposes only. They are not derived from any real
+// prediction model, and the "win rate" they produce is not a genuine track
+// record. Once real grading exists, replace `fetchTickets` /
+// `fetchPerformanceHistory` with queries against real, graded Supabase
+// tables — advertising this mock win rate to paying users as if it were a
+// real historical accuracy figure would be misleading and should be avoided.
 // ---------------------------------------------------------------------------
 
 export type MatchStatus = 'pending' | 'green' | 'red';
@@ -41,7 +44,7 @@ export interface Ticket {
   id: string;
   tier: TicketTier;
   label: string;
-  /** e.g. "2 of 5" when a tier generates multiple slips per day, else undefined */
+  /** e.g. "2 of 4" when a tier generates multiple slips per day, else undefined */
   slipLabel?: string;
   matchCount: number;
   oddsRange: string;
@@ -70,19 +73,24 @@ export const TIER_CONFIG: TierConfig[] = [
   { tier: 'weekly_titan', label: 'Weekly Titan', matchCount: 30, oddsRange: 'Mixed', alwaysFree: false },
 ];
 
-// How many fresh slips of each tier get generated per calendar day.
-// Bronze and Gold are the high-frequency, high-volume tiers; everything
-// else ships one curated slip per day.
-export const DAILY_TICKET_COUNTS: Record<TicketTier, number> = {
-  mega: 1,
-  bronze: 5,
-  gold: 5,
-  silver: 1,
-  platinum: 1,
-  diamond: 1,
-  weekly_lite: 1,
-  weekly_titan: 1,
-};
+// ---------------------------------------------------------------------------
+// Daily slip volume
+// ---------------------------------------------------------------------------
+// - Gold ships a fixed 5 slips a day.
+// - Tiers with 5 matches or fewer (Mega, Bronze, Silver) scale from 1 up to
+//   4 slips a day depending on how many fixtures are "available" that day
+//   (a deterministic per-day busyness factor — more fixtures, more slips).
+// - Everything else (Platinum, Diamond, Weekly Lite, Weekly Titan) ships 1
+//   curated slip a day, since these are large accumulators by nature.
+
+function getDailySlipCount(tier: TicketTier, day: string): number {
+  if (tier === 'gold') return 5;
+  if (tier === 'mega' || tier === 'bronze' || tier === 'silver') {
+    const busyness = hashSeed(`${day}-busyness`) / 233280; // deterministic 0..1
+    return 1 + Math.round(busyness * 3); // 1..4, maxing out on "busy" days
+  }
+  return 1;
+}
 
 const LEAGUES = ['EPL', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1', 'UCL'];
 const TEAMS = [
@@ -91,6 +99,15 @@ const TEAMS = [
   'Atletico Madrid', 'Juventus', 'Napoli', 'Leipzig',
 ];
 const MARKETS = ['Over 1.5 Goals', 'Home Win', 'Away Win', 'BTTS', 'Draw No Bet', 'Over 2.5 Goals'];
+
+// ---------------------------------------------------------------------------
+// Mock outcome probabilities (PLACEHOLDER — see file header note)
+// Decided at the ticket level first, then matches are generated consistent
+// with that outcome, so the aggregate win rate stays predictable regardless
+// of how many legs a ticket has (a 30-leg accumulator isn't punished just
+// for having more matches — this is mock data, not a real settlement engine).
+// ---------------------------------------------------------------------------
+const OUTCOME_PROBS = { green: 0.74, red: 0.11, pending: 0.15 } as const;
 
 function seededRandom(seed: number) {
   // Deterministic pseudo-random generator — same seed always produces the
@@ -119,15 +136,13 @@ export function dateKey(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-function buildMatch(rand: () => number, index: number, seedOffset: number): Match {
+function buildMatch(rand: () => number, index: number, seedOffset: number, forcedStatus: MatchStatus): Match {
   const league = LEAGUES[Math.floor(rand() * LEAGUES.length)];
   const home = TEAMS[Math.floor(rand() * TEAMS.length)];
   let away = TEAMS[Math.floor(rand() * TEAMS.length)];
   if (away === home) away = TEAMS[(TEAMS.indexOf(away) + 1) % TEAMS.length];
   const market = MARKETS[Math.floor(rand() * MARKETS.length)];
   const odds = Math.round((1.3 + rand() * 2.5) * 100) / 100;
-  const statusRoll = rand();
-  const status: MatchStatus = statusRoll < 0.55 ? 'green' : statusRoll < 0.8 ? 'pending' : 'red';
   const confidence = Math.round(60 + rand() * 38);
 
   return {
@@ -138,14 +153,40 @@ function buildMatch(rand: () => number, index: number, seedOffset: number): Matc
     market,
     odds,
     kickoff: new Date(Date.now() + index * 3600_000).toISOString(),
-    status,
+    status: forcedStatus,
     confidence,
   };
 }
 
+/** Decide the overall ticket outcome first, then build per-match statuses consistent with it. */
 function buildTicket(config: TierConfig, seed: number, slipLabel?: string): Ticket {
   const rand = seededRandom(seed);
-  const matches = Array.from({ length: config.matchCount }, (_, i) => buildMatch(rand, i, seed));
+  const n = config.matchCount;
+
+  const outcomeRoll = rand();
+  const overall: MatchStatus =
+    outcomeRoll < OUTCOME_PROBS.green ? 'green' : outcomeRoll < OUTCOME_PROBS.green + OUTCOME_PROBS.red ? 'red' : 'pending';
+
+  const statuses: MatchStatus[] = new Array(n).fill('green');
+  if (overall === 'red') {
+    // Exactly one losing leg — the classic "one bad selection" accumulator failure.
+    const badIndex = Math.floor(rand() * n);
+    statuses[badIndex] = 'red';
+  } else if (overall === 'pending') {
+    // A handful of legs still in play, none failed yet.
+    const pendingFraction = 0.3 + rand() * 0.4;
+    let anyPending = false;
+    for (let i = 0; i < n; i++) {
+      if (rand() < pendingFraction) {
+        statuses[i] = 'pending';
+        anyPending = true;
+      }
+    }
+    if (!anyPending) statuses[0] = 'pending';
+  }
+  // overall === 'green' → statuses stays all-green.
+
+  const matches = Array.from({ length: n }, (_, i) => buildMatch(rand, i, seed, statuses[i]));
   const totalOdds = Math.round(matches.reduce((acc, m) => acc * m.odds, 1) * 100) / 100;
 
   return {
@@ -153,7 +194,7 @@ function buildTicket(config: TierConfig, seed: number, slipLabel?: string): Tick
     tier: config.tier,
     label: config.label,
     slipLabel,
-    matchCount: config.matchCount,
+    matchCount: n,
     oddsRange: config.oddsRange,
     totalOdds,
     isFree: config.alwaysFree,
@@ -174,9 +215,8 @@ export function getTicketStatus(ticket: Ticket): MatchStatus {
 }
 
 /**
- * Generates every ticket for a given calendar day: 5 Bronze slips, 5 Gold
- * slips, and 1 slip for every other tier — deterministically, so the same
- * date always regenerates identical tickets and outcomes.
+ * Generates every ticket for a given calendar day — deterministically, so
+ * the same date always regenerates identical tickets and outcomes.
  *
  * Replace this with a real Supabase query once tickets are graded and
  * stored server-side, e.g.:
@@ -191,7 +231,7 @@ export function getTicketsForDate(date: Date): Ticket[] {
   const tickets: Ticket[] = [];
 
   TIER_CONFIG.forEach((config) => {
-    const count = DAILY_TICKET_COUNTS[config.tier];
+    const count = getDailySlipCount(config.tier, day);
     for (let i = 0; i < count; i++) {
       const seed = hashSeed(`${day}-${config.tier}-${i}`);
       const slipLabel = count > 1 ? `${i + 1} of ${count}` : undefined;
@@ -208,7 +248,7 @@ export async function fetchTickets(date: Date = new Date()): Promise<Ticket[]> {
 }
 
 /**
- * Fetch every slip for one tier on a given day (e.g. all 5 Bronze slips).
+ * Fetch every slip for one tier on a given day (e.g. all of today's Gold slips).
  */
 export async function fetchTicketsByTier(tier: TicketTier, date: Date = new Date()): Promise<Ticket[]> {
   return getTicketsForDate(date).filter((t) => t.tier === tier);
@@ -263,7 +303,7 @@ export function getAnonymousTrialStart(): string {
 // doesn't need a database yet — every past day can be re-derived on demand
 // and will always produce the same result. Once matches are graded by a
 // real backend job, swap this to read a `daily_performance` table instead
-// of recomputing it client-side.
+// of recomputing it client-side — see the file header note.
 
 export interface DayPerformance {
   date: string; // 'YYYY-MM-DD'
