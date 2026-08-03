@@ -18,26 +18,26 @@ import {
 
 // ---------------------------------------------------------------------------
 // Color tokens — Odd Saint brand
-// A warm, silk-inspired palette: jet black and charcoal base (per brand spec),
-// emerald as the primary action color, and a champagne-gold accent used
-// sparingly as the "silk sheen" signature — hairlines, dividers, and the
-// premium-tier glow.
+// A light, silk-inspired palette: warm ivory and cream surfaces, deep
+// charcoal-brown ink for readability, emerald as the primary action color,
+// and a deeper champagne-gold accent tuned for contrast on light backgrounds
+// — hairlines, dividers, and the premium-tier glow.
 // ---------------------------------------------------------------------------
 const COLORS = {
-  bg: '#0a0a0a',
-  surface: '#171717',
-  surfaceAlt: '#201e19',
-  border: '#2a2a2a',
-  hairline: 'rgba(201,168,119,0.22)',
-  emerald: '#10b981',
-  gold: '#c9a877',
-  red: '#ef4444',
-  textPrimary: '#f6f1e7',
-  textMuted: '#a89e8c',
+  bg: '#f7f2e7',
+  surface: '#ffffff',
+  surfaceAlt: '#f1ead9',
+  border: '#e3d9c2',
+  hairline: 'rgba(176,141,87,0.35)',
+  emerald: '#0d9668',
+  gold: '#a3803f',
+  red: '#c0392b',
+  textPrimary: '#231f16',
+  textMuted: '#7a7062',
 };
 
 const SILK_SHEEN = `linear-gradient(90deg, ${COLORS.gold} 0%, ${COLORS.emerald} 50%, ${COLORS.gold} 100%)`;
-const SURFACE_GRADIENT = `linear-gradient(155deg, #1c1b17 0%, #17150f 45%, #121110 100%)`;
+const SURFACE_GRADIENT = `linear-gradient(155deg, #ffffff 0%, #fbf6ea 45%, #f4ecd9 100%)`;
 const FONT_DISPLAY = 'var(--font-display), Georgia, serif';
 const FONT_BODY = 'var(--font-body), system-ui, -apple-system, sans-serif';
 
@@ -436,7 +436,7 @@ function TicketCard({
               borderRadius: 999,
               color:
                 overallStatus === 'green' ? '#04150f' : overallStatus === 'red' ? '#2a0808' : COLORS.textMuted,
-              background: overallStatus === 'pending' ? 'rgba(255,255,255,0.06)' : borderColor,
+              background: overallStatus === 'pending' ? 'rgba(35,31,22,0.05)' : borderColor,
               border: overallStatus === 'pending' ? `1px solid ${COLORS.border}` : 'none',
             }}
           >
@@ -814,7 +814,7 @@ function Hero({
             <div
               key={stat.label}
               style={{
-                background: 'rgba(255,255,255,0.03)',
+                background: 'rgba(35,31,22,0.03)',
                 border: `1px solid ${COLORS.border}`,
                 borderRadius: 10,
                 padding: '8px 14px',
@@ -891,7 +891,7 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
                   flex: 1,
                   height: 8,
                   borderRadius: 999,
-                  background: 'rgba(255,255,255,0.05)',
+                  background: 'rgba(35,31,22,0.06)',
                   overflow: 'hidden',
                   display: 'flex',
                 }}
@@ -1042,7 +1042,7 @@ export default function Page() {
           position: 'sticky',
           top: 0,
           zIndex: 20,
-          background: 'rgba(10,10,10,0.92)',
+          background: 'rgba(247,242,231,0.9)',
           backdropFilter: 'blur(10px)',
           borderBottom: `1px solid ${COLORS.hairline}`,
           padding: '14px 16px',
