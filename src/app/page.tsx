@@ -7,6 +7,7 @@ import {
   getTicketStatus,
   getTrialDaysRemaining,
   isWithinFreeTrial,
+  getAnonymousTrialStart,
   type Ticket,
   type Match,
   type MatchStatus,
@@ -442,7 +443,7 @@ function TicketCard({
 // Auth gate
 // ---------------------------------------------------------------------------
 
-function LoginView({ onSent }: { onSent: (email: string) => void }) {
+function LoginModal({ onSent, onClose }: { onSent: (email: string) => void; onClose: () => void }) {
   const [email, setEmail] = useState('');
   const [agreed, setAgreed] = useState(false);
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -463,105 +464,125 @@ function LoginView({ onSent }: { onSent: (email: string) => void }) {
   return (
     <div
       style={{
-        minHeight: '100vh',
-        background: COLORS.bg,
-        color: COLORS.textPrimary,
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.8)',
+        zIndex: 40,
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: 20,
       }}
     >
-      <div style={{ marginBottom: 24 }}>
-        <Logo />
-      </div>
-      <form
-        onSubmit={handleLogin}
-        style={{
-          width: '100%',
-          maxWidth: 360,
-          background: COLORS.surface,
-          border: `1px solid ${COLORS.border}`,
-          borderRadius: 14,
-          padding: 20,
-        }}
-      >
-        <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>
-          Sign in with a magic link to access your free 30-day trial of curated tickets.
+      <div style={{ width: '100%', maxWidth: 360 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <Logo />
         </div>
-        <input
-          type="email"
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+        <form
+          onSubmit={handleLogin}
           style={{
             width: '100%',
-            padding: '10px 12px',
-            borderRadius: 8,
+            background: COLORS.surface,
             border: `1px solid ${COLORS.border}`,
-            background: COLORS.surfaceAlt,
-            color: COLORS.textPrimary,
-            fontSize: 13,
-            marginBottom: 12,
-            boxSizing: 'border-box',
-          }}
-        />
-
-        <div style={{ marginBottom: 14 }}>
-          <IndemnificationNotice compact />
-        </div>
-
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 8,
-            fontSize: 12,
-            color: COLORS.textMuted,
-            marginBottom: 14,
-            cursor: 'pointer',
+            borderRadius: 14,
+            padding: 20,
+            position: 'relative',
           }}
         >
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              background: 'none',
+              border: 'none',
+              color: COLORS.textMuted,
+              fontSize: 16,
+              cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
+
+          <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14, paddingRight: 20 }}>
+            Sign in with a magic link to sync your trial and unlocks across devices.
+          </div>
           <input
-            type="checkbox"
-            checked={agreed}
-            onChange={(e) => setAgreed(e.target.checked)}
-            style={{ marginTop: 2 }}
+            type="email"
+            required
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: `1px solid ${COLORS.border}`,
+              background: COLORS.surfaceAlt,
+              color: COLORS.textPrimary,
+              fontSize: 13,
+              marginBottom: 12,
+              boxSizing: 'border-box',
+            }}
           />
-          I have read and accept the Hold-Harmless Indemnification Agreement.
-        </label>
 
-        <button
-          type="submit"
-          disabled={!agreed || !email || status === 'sending'}
-          style={{
-            width: '100%',
-            padding: '11px 0',
-            borderRadius: 8,
-            border: 'none',
-            fontWeight: 700,
-            fontSize: 13,
-            cursor: !agreed || !email ? 'not-allowed' : 'pointer',
-            background: !agreed || !email ? COLORS.border : COLORS.emerald,
-            color: !agreed || !email ? COLORS.textMuted : '#04150f',
-          }}
-        >
-          {status === 'sending' ? 'Sending link...' : 'Send Magic Link'}
-        </button>
+          <div style={{ marginBottom: 14 }}>
+            <IndemnificationNotice compact />
+          </div>
 
-        {status === 'sent' && (
-          <div style={{ marginTop: 10, fontSize: 12, color: COLORS.emerald, textAlign: 'center' }}>
-            Check your inbox for the sign-in link.
-          </div>
-        )}
-        {status === 'error' && (
-          <div style={{ marginTop: 10, fontSize: 12, color: COLORS.red, textAlign: 'center' }}>
-            Something went wrong. Please try again.
-          </div>
-        )}
-      </form>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 8,
+              fontSize: 12,
+              color: COLORS.textMuted,
+              marginBottom: 14,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            I have read and accept the Hold-Harmless Indemnification Agreement.
+          </label>
+
+          <button
+            type="submit"
+            disabled={!agreed || !email || status === 'sending'}
+            style={{
+              width: '100%',
+              padding: '11px 0',
+              borderRadius: 8,
+              border: 'none',
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: !agreed || !email ? 'not-allowed' : 'pointer',
+              background: !agreed || !email ? COLORS.border : COLORS.emerald,
+              color: !agreed || !email ? COLORS.textMuted : '#04150f',
+            }}
+          >
+            {status === 'sending' ? 'Sending link...' : 'Send Magic Link'}
+          </button>
+
+          {status === 'sent' && (
+            <div style={{ marginTop: 10, fontSize: 12, color: COLORS.emerald, textAlign: 'center' }}>
+              Check your inbox for the sign-in link.
+            </div>
+          )}
+          {status === 'error' && (
+            <div style={{ marginTop: 10, fontSize: 12, color: COLORS.red, textAlign: 'center' }}>
+              Something went wrong. Please try again.
+            </div>
+          )}
+        </form>
+      </div>
     </div>
   );
 }
@@ -573,11 +594,19 @@ function LoginView({ onSent }: { onSent: (email: string) => void }) {
 export default function Page() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [registeredAt, setRegisteredAt] = useState<string | null>(null);
+  const [anonTrialStart, setAnonTrialStart] = useState<string | null>(null);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [unlocks, setUnlocks] = useState<UnlockMap>({});
   const [adTicketId, setAdTicketId] = useState<string | null>(null);
   const [adReady, setAdReady] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Every visitor gets the 30-day trial immediately — no account required.
+  // The clock starts on first visit and is stored locally on their device.
+  useEffect(() => {
+    setAnonTrialStart(getAnonymousTrialStart());
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -606,8 +635,11 @@ export default function Page() {
     fetchTickets().then(setTickets);
   }, []);
 
-  const trialActive = useMemo(() => isWithinFreeTrial(registeredAt), [registeredAt]);
-  const daysLeft = useMemo(() => getTrialDaysRemaining(registeredAt), [registeredAt]);
+  // Logged-in users get their trial tied to their account (registeredAt);
+  // everyone else gets the anonymous, device-local trial start.
+  const effectiveTrialStart = userEmail ? registeredAt : anonTrialStart;
+  const trialActive = useMemo(() => isWithinFreeTrial(effectiveTrialStart), [effectiveTrialStart]);
+  const daysLeft = useMemo(() => getTrialDaysRemaining(effectiveTrialStart), [effectiveTrialStart]);
 
   function handleWatchAd(ticketId: string) {
     setAdTicketId(ticketId);
@@ -652,10 +684,6 @@ export default function Page() {
     );
   }
 
-  if (!userEmail) {
-    return <LoginView onSent={setUserEmail} />;
-  }
-
   // Interleave an in-feed ad slot between the Bronze and Gold tickets.
   const feedItems: Array<{ kind: 'ticket'; ticket: Ticket } | { kind: 'ad' }> = [];
   tickets.forEach((t) => {
@@ -680,20 +708,38 @@ export default function Page() {
         }}
       >
         <Logo />
-        <button
-          onClick={() => supabase.auth.signOut()}
-          style={{
-            background: 'none',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: 8,
-            padding: '6px 10px',
-            color: COLORS.textMuted,
-            fontSize: 11.5,
-            cursor: 'pointer',
-          }}
-        >
-          Sign out
-        </button>
+        {userEmail ? (
+          <button
+            onClick={() => supabase.auth.signOut()}
+            style={{
+              background: 'none',
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 8,
+              padding: '6px 10px',
+              color: COLORS.textMuted,
+              fontSize: 11.5,
+              cursor: 'pointer',
+            }}
+          >
+            Sign out
+          </button>
+        ) : (
+          <button
+            onClick={() => setShowLoginModal(true)}
+            style={{
+              background: 'none',
+              border: `1px solid ${COLORS.emerald}55`,
+              borderRadius: 8,
+              padding: '6px 10px',
+              color: COLORS.emerald,
+              fontSize: 11.5,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Sign in
+          </button>
+        )}
       </div>
 
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px' }}>
@@ -710,7 +756,7 @@ export default function Page() {
           }}
         >
           {trialActive
-            ? `Free trial active — ${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining. Every ticket is unlocked.`
+            ? `Free trial active — ${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining. Every ticket is unlocked, no account needed.`
             : 'Your free trial has ended. The Mega Day Ticket stays free forever — unlock premium tiers with an ad, a micro-fee, or a subscription.'}
         </div>
 
@@ -746,6 +792,16 @@ export default function Page() {
       {/* Watch-ad-to-unlock overlay */}
       {adTicketId && (
         <WatchAdOverlay onDone={() => setAdReady(true)} onClose={closeAdOverlay} />
+      )}
+
+      {/* Optional sign-in modal — never blocks browsing, only opened by choice */}
+      {showLoginModal && (
+        <LoginModal
+          onSent={(email) => {
+            setUserEmail(email);
+          }}
+          onClose={() => setShowLoginModal(false)}
+        />
       )}
     </div>
   );
