@@ -18,27 +18,28 @@ import {
 
 // ---------------------------------------------------------------------------
 // Color tokens — Odd Saint brand
-// A light, silk-inspired palette: warm ivory and cream surfaces, deep
-// charcoal-brown ink for readability, emerald as the primary action color,
-// and a deeper champagne-gold accent tuned for contrast on light backgrounds
-// — hairlines, dividers, and the premium-tier glow.
+// A functional, high-contrast palette in the style of mainstream sportsbook
+// apps: clean white/grey surfaces, a bold saturated green as the primary
+// brand color, and the standard win/loss/live traffic-light convention
+// (green = won, red = lost, amber = still live) so ticket status reads at a
+// glance without needing to read the label text.
 // ---------------------------------------------------------------------------
 const COLORS = {
-  bg: '#f7f2e7',
+  bg: '#f4f6f5',
   surface: '#ffffff',
-  surfaceAlt: '#f1ead9',
-  border: '#e3d9c2',
-  hairline: 'rgba(176,141,87,0.35)',
-  emerald: '#0d9668',
-  gold: '#a3803f',
-  red: '#c0392b',
-  textPrimary: '#231f16',
-  textMuted: '#7a7062',
+  surfaceAlt: '#eef1ef',
+  border: '#d7dedb',
+  hairline: '#c3ccc7',
+  emerald: '#0b8a4f',
+  gold: '#b8860b',
+  amber: '#e08e00',
+  red: '#d3321f',
+  textPrimary: '#12241c',
+  textMuted: '#5c6b63',
 };
 
-const SILK_SHEEN = `linear-gradient(90deg, ${COLORS.gold} 0%, ${COLORS.emerald} 50%, ${COLORS.gold} 100%)`;
-const SURFACE_GRADIENT = `linear-gradient(155deg, #ffffff 0%, #fbf6ea 45%, #f4ecd9 100%)`;
-const FONT_DISPLAY = 'var(--font-display), Georgia, serif';
+const SURFACE_GRADIENT = COLORS.surface; // flat surfaces — bookmaker UIs favor clean flat cards over gradients
+const FONT_DISPLAY = 'var(--font-body), system-ui, -apple-system, sans-serif';
 const FONT_BODY = 'var(--font-body), system-ui, -apple-system, sans-serif';
 
 type UnlockMap = Record<string, boolean>; // ticketId -> unlocked via ad/purchase
@@ -47,24 +48,23 @@ type UnlockMap = Record<string, boolean>; // ticketId -> unlocked via ad/purchas
 // Small shared components
 // ---------------------------------------------------------------------------
 
-function Logo() {
+function Logo({ light = false }: { light?: boolean }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <div
         style={{
-          width: 36,
-          height: 36,
-          borderRadius: 8,
-          background: `linear-gradient(135deg, ${COLORS.gold} 0%, ${COLORS.emerald} 100%)`,
-          color: '#0a0f0c',
+          width: 34,
+          height: 34,
+          borderRadius: 7,
+          background: light ? '#ffffff' : COLORS.emerald,
+          color: light ? COLORS.emerald : '#ffffff',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           fontFamily: FONT_DISPLAY,
-          fontWeight: 600,
+          fontWeight: 800,
           fontSize: 14,
           letterSpacing: '-0.01em',
-          boxShadow: `0 0 0 1px ${COLORS.hairline}, 0 4px 14px -4px rgba(201,168,119,0.45)`,
         }}
       >
         OS
@@ -72,10 +72,10 @@ function Logo() {
       <span
         style={{
           fontFamily: FONT_DISPLAY,
-          fontWeight: 600,
+          fontWeight: 800,
           fontSize: 19,
-          letterSpacing: '0.01em',
-          color: COLORS.textPrimary,
+          letterSpacing: '-0.01em',
+          color: light ? '#ffffff' : COLORS.textPrimary,
         }}
       >
         Odd Saint
@@ -241,7 +241,7 @@ function WatchAdOverlay({ onDone, onClose }: { onDone: () => void; onClose: () =
             fontFamily: FONT_DISPLAY,
             fontSize: 34,
             fontWeight: 600,
-            color: COLORS.gold,
+            color: COLORS.emerald,
             marginBottom: 16,
           }}
         >
@@ -316,10 +316,21 @@ function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
         </div>
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, fontWeight: 600, color: COLORS.gold }}>
+        <div
+          style={{
+            fontFamily: FONT_DISPLAY,
+            fontSize: 14,
+            fontWeight: 800,
+            color: COLORS.emerald,
+            background: 'rgba(11,138,79,0.1)',
+            borderRadius: 6,
+            padding: '3px 9px',
+            display: 'inline-block',
+          }}
+        >
           {match.odds}
         </div>
-        <div style={{ marginTop: 3 }}>
+        <div style={{ marginTop: 4 }}>
           <ConfidenceBadge value={match.confidence} />
         </div>
       </div>
@@ -347,7 +358,7 @@ function TicketCard({
   const isLocked = !ticket.isFree && !trialActive && !unlocked;
 
   const borderColor =
-    overallStatus === 'green' ? COLORS.emerald : overallStatus === 'red' ? COLORS.red : COLORS.border;
+    overallStatus === 'green' ? COLORS.emerald : overallStatus === 'red' ? COLORS.red : COLORS.amber;
 
   const statusLabel =
     overallStatus === 'green' ? 'WON' : overallStatus === 'red' ? 'FAILED' : 'IN PLAY';
@@ -357,30 +368,24 @@ function TicketCard({
       style={{
         position: 'relative',
         background: SURFACE_GRADIENT,
-        border: `1px solid ${overallStatus === 'pending' ? COLORS.border : borderColor}`,
+        border: `1px solid ${borderColor}`,
         borderRadius: 14,
         padding: '17px 16px 16px',
         marginBottom: 14,
         overflow: 'hidden',
-        boxShadow: overallStatus === 'pending' ? 'none' : `0 0 0 1px ${borderColor}33`,
+        boxShadow: `0 0 0 1px ${borderColor}33`,
       }}
     >
-      {/* Silk sheen signature hairline */}
+      {/* Status indicator bar — solid color, no decorative animation, so
+          win/loss/live reads instantly at a glance. */}
       <div
-        className="silk-sheen"
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
-          height: 2,
-          background:
-            overallStatus === 'green'
-              ? COLORS.emerald
-              : overallStatus === 'red'
-              ? COLORS.red
-              : SILK_SHEEN,
-          backgroundSize: '200% 100%',
+          height: 3,
+          background: borderColor,
         }}
       />
 
@@ -408,10 +413,9 @@ function TicketCard({
                 style={{
                   fontFamily: FONT_BODY,
                   fontSize: 10.5,
-                  fontWeight: 600,
-                  color: COLORS.gold,
-                  background: 'rgba(201,168,119,0.1)',
-                  border: `1px solid ${COLORS.hairline}`,
+                  fontWeight: 700,
+                  color: COLORS.emerald,
+                  background: 'rgba(11,138,79,0.1)',
                   borderRadius: 999,
                   padding: '1px 7px',
                 }}
@@ -422,11 +426,12 @@ function TicketCard({
           </div>
           <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 3 }}>
             {ticket.matchCount} matches · odds {ticket.oddsRange} · total{' '}
-            <span style={{ color: COLORS.gold, fontWeight: 600 }}>{ticket.totalOdds}x</span>
+            <span style={{ color: COLORS.emerald, fontWeight: 700 }}>{ticket.totalOdds}x</span>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span
+            className={overallStatus === 'pending' ? 'live-pulse' : undefined}
             style={{
               fontFamily: FONT_BODY,
               fontSize: 10,
@@ -434,10 +439,8 @@ function TicketCard({
               letterSpacing: '0.06em',
               padding: '4px 10px',
               borderRadius: 999,
-              color:
-                overallStatus === 'green' ? '#04150f' : overallStatus === 'red' ? '#2a0808' : COLORS.textMuted,
-              background: overallStatus === 'pending' ? 'rgba(35,31,22,0.05)' : borderColor,
-              border: overallStatus === 'pending' ? `1px solid ${COLORS.border}` : 'none',
+              color: overallStatus === 'green' ? '#04150f' : overallStatus === 'red' ? '#2a0808' : '#3d2900',
+              background: borderColor,
             }}
           >
             {statusLabel}
@@ -714,142 +717,106 @@ function Hero({
   return (
     <div
       style={{
-        position: 'relative',
-        overflow: 'hidden',
-        borderRadius: 18,
-        border: `1px solid ${COLORS.hairline}`,
-        background: SURFACE_GRADIENT,
-        padding: '30px 22px 26px',
+        borderRadius: 12,
+        background: COLORS.emerald,
+        padding: '20px 18px 18px',
         marginBottom: 18,
         textAlign: 'center',
       }}
     >
-      {/* Decorative signature motif — concentric arcs suggesting a crest,
-          drawn in inline SVG so there's no external asset to load. */}
-      <svg
-        viewBox="0 0 400 200"
-        aria-hidden="true"
+      <div
         style={{
-          position: 'absolute',
-          top: -40,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: 480,
-          height: 240,
-          opacity: 0.35,
-          pointerEvents: 'none',
+          fontFamily: FONT_BODY,
+          fontSize: 10.5,
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.75)',
+          marginBottom: 6,
         }}
       >
-        <defs>
-          <linearGradient id="heroArc" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor={COLORS.gold} />
-            <stop offset="100%" stopColor={COLORS.emerald} />
-          </linearGradient>
-        </defs>
-        <circle cx="200" cy="170" r="150" fill="none" stroke="url(#heroArc)" strokeWidth="1" />
-        <circle cx="200" cy="170" r="118" fill="none" stroke="url(#heroArc)" strokeWidth="1" opacity="0.7" />
-        <circle cx="200" cy="170" r="86" fill="none" stroke="url(#heroArc)" strokeWidth="1" opacity="0.45" />
-      </svg>
-
-      <div style={{ position: 'relative' }}>
-        <div
-          style={{
-            fontFamily: FONT_BODY,
-            fontSize: 10.5,
-            fontWeight: 600,
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            color: COLORS.gold,
-            marginBottom: 10,
-          }}
-        >
-          Today's Slate
-        </div>
-        <h1
-          style={{
-            fontFamily: FONT_DISPLAY,
-            fontWeight: 600,
-            fontSize: 27,
-            lineHeight: 1.15,
-            color: COLORS.textPrimary,
-            margin: '0 0 10px',
-            letterSpacing: '0.005em',
-          }}
-        >
-          Curated tickets,
-          <br />
-          graded in the open.
-        </h1>
-        <p
-          style={{
-            fontFamily: FONT_BODY,
-            fontSize: 13,
-            color: COLORS.textMuted,
-            maxWidth: 340,
-            margin: '0 auto 20px',
-            lineHeight: 1.55,
-          }}
-        >
-          Odd Saint offers football predictions only — not a betting
-          operator, not financial advice. Every pick carries an AI
-          confidence index, never a guarantee.
-        </p>
-
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            gap: 10,
-            flexWrap: 'wrap',
-            marginBottom: 6,
-          }}
-        >
-          {[
-            { label: 'Bronze slips today', value: String(bronzeCount) },
-            { label: 'Gold slips today', value: String(goldCount) },
-            {
-              label: '14-day win rate',
-              value: winRatePct !== null ? `${winRatePct}%` : '—',
-            },
-          ].map((stat) => (
-            <div
-              key={stat.label}
-              style={{
-                background: 'rgba(35,31,22,0.03)',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: 10,
-                padding: '8px 14px',
-                minWidth: 96,
-              }}
-            >
-              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 600, color: COLORS.gold }}>
-                {stat.value}
-              </div>
-              <div style={{ fontSize: 9.5, color: COLORS.textMuted, marginTop: 2, lineHeight: 1.3 }}>
-                {stat.label}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <button
-          onClick={onViewHistory}
-          style={{
-            marginTop: 12,
-            background: 'none',
-            border: 'none',
-            color: COLORS.emerald,
-            fontFamily: FONT_BODY,
-            fontSize: 11.5,
-            fontWeight: 600,
-            cursor: 'pointer',
-            textDecoration: 'underline',
-            textUnderlineOffset: 3,
-          }}
-        >
-          View performance history →
-        </button>
+        Today's Slate
       </div>
+      <h1
+        style={{
+          fontFamily: FONT_DISPLAY,
+          fontWeight: 800,
+          fontSize: 23,
+          lineHeight: 1.2,
+          color: '#ffffff',
+          margin: '0 0 8px',
+        }}
+      >
+        Curated tickets, graded in the open.
+      </h1>
+      <p
+        style={{
+          fontFamily: FONT_BODY,
+          fontSize: 12.5,
+          color: 'rgba(255,255,255,0.85)',
+          maxWidth: 360,
+          margin: '0 auto 18px',
+          lineHeight: 1.5,
+        }}
+      >
+        Odd Saint offers football predictions only — not a betting operator,
+        not financial advice. Every pick carries an AI confidence index,
+        never a guarantee.
+      </p>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          marginBottom: 4,
+        }}
+      >
+        {[
+          { label: 'Bronze slips today', value: String(bronzeCount) },
+          { label: 'Gold slips today', value: String(goldCount) },
+          {
+            label: '14-day win rate',
+            value: winRatePct !== null ? `${winRatePct}%` : '—',
+          },
+        ].map((stat) => (
+          <div
+            key={stat.label}
+            style={{
+              background: 'rgba(255,255,255,0.14)',
+              borderRadius: 8,
+              padding: '8px 14px',
+              minWidth: 96,
+            }}
+          >
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18, fontWeight: 800, color: '#ffffff' }}>
+              {stat.value}
+            </div>
+            <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.75)', marginTop: 2, lineHeight: 1.3 }}>
+              {stat.label}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={onViewHistory}
+        style={{
+          marginTop: 10,
+          background: 'none',
+          border: 'none',
+          color: '#ffffff',
+          fontFamily: FONT_BODY,
+          fontSize: 11.5,
+          fontWeight: 700,
+          cursor: 'pointer',
+          textDecoration: 'underline',
+          textUnderlineOffset: 3,
+        }}
+      >
+        View performance history →
+      </button>
     </div>
   );
 }
@@ -892,7 +859,7 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
                   flex: 1,
                   height: 8,
                   borderRadius: 999,
-                  background: 'rgba(35,31,22,0.06)',
+                  background: 'rgba(18,36,28,0.06)',
                   overflow: 'hidden',
                   display: 'flex',
                 }}
@@ -901,7 +868,7 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
                   <div
                     style={{
                       width: `${wonPct}%`,
-                      background: `linear-gradient(90deg, ${COLORS.emerald}, ${COLORS.gold})`,
+                      background: COLORS.emerald,
                     }}
                   />
                 )}
@@ -1078,27 +1045,26 @@ export default function Page() {
           position: 'sticky',
           top: 0,
           zIndex: 20,
-          background: 'rgba(247,242,231,0.9)',
-          backdropFilter: 'blur(10px)',
-          borderBottom: `1px solid ${COLORS.hairline}`,
+          background: COLORS.emerald,
           padding: '14px 16px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
         }}
       >
-        <Logo />
+        <Logo light />
         {userEmail ? (
           <button
             onClick={() => supabase.auth.signOut()}
             style={{
-              background: 'none',
-              border: `1px solid ${COLORS.border}`,
-              borderRadius: 8,
-              padding: '6px 10px',
-              color: COLORS.textMuted,
+              background: 'rgba(255,255,255,0.12)',
+              border: '1px solid rgba(255,255,255,0.4)',
+              borderRadius: 7,
+              padding: '6px 12px',
+              color: '#ffffff',
               fontFamily: FONT_BODY,
               fontSize: 11.5,
+              fontWeight: 600,
               cursor: 'pointer',
             }}
           >
@@ -1108,15 +1074,15 @@ export default function Page() {
           <button
             onClick={() => setShowLoginModal(true)}
             style={{
-              background: 'none',
-              border: `1px solid ${COLORS.gold}66`,
-              borderRadius: 8,
-              padding: '6px 10px',
-              color: COLORS.gold,
+              background: '#ffffff',
+              border: 'none',
+              borderRadius: 7,
+              padding: '6px 12px',
+              color: COLORS.emerald,
               fontFamily: FONT_BODY,
               fontSize: 11.5,
               cursor: 'pointer',
-              fontWeight: 600,
+              fontWeight: 700,
             }}
           >
             Sign in
