@@ -790,8 +790,9 @@ function Hero({
             lineHeight: 1.55,
           }}
         >
-          Fresh Bronze and Gold slips drop daily, backed by an AI confidence
-          index — never a guarantee.
+          Odd Saint offers football predictions only — not a betting
+          operator, not financial advice. Every pick carries an AI
+          confidence index, never a guarantee.
         </p>
 
         <div
@@ -914,6 +915,41 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
       </div>
       <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 10, lineHeight: 1.5 }}>
         Win rate = won ÷ (won + failed) among that day's tickets. Ticket count shown after the dot.
+      </div>
+    </div>
+  );
+}
+
+function Footer() {
+  const [showLegal, setShowLegal] = useState(false);
+
+  return (
+    <div style={{ marginTop: 28, paddingTop: 18, borderTop: `1px solid ${COLORS.border}` }}>
+      <button
+        onClick={() => setShowLegal((s) => !s)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          color: COLORS.textMuted,
+          fontFamily: FONT_BODY,
+          fontSize: 11.5,
+          cursor: 'pointer',
+          textDecoration: 'underline',
+          textUnderlineOffset: 3,
+        }}
+      >
+        Legal & disclosures {showLegal ? '▲' : '▼'}
+      </button>
+
+      {showLegal && (
+        <div style={{ marginTop: 12 }}>
+          <IndemnificationNotice compact />
+        </div>
+      )}
+
+      <div style={{ fontSize: 10.5, color: COLORS.textMuted, marginTop: 14, lineHeight: 1.5 }}>
+        © {new Date().getFullYear()} Odd Saint.
       </div>
     </div>
   );
@@ -1118,11 +1154,6 @@ export default function Page() {
             : 'Your free trial has ended. The Mega Day Ticket stays free forever — unlock premium tiers with an ad, a micro-fee, or a subscription.'}
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <IndemnificationNotice />
-        </div>
-
-
         {/* Ticket feed with in-feed ad injection */}
         {feedItems.map((item, idx) =>
           item.kind === 'ad' ? (
@@ -1141,6 +1172,8 @@ export default function Page() {
             />
           )
         )}
+
+        <Footer />
       </div>
 
       {/* Sticky anchor ad banner */}
