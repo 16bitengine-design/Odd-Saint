@@ -1,22 +1,22 @@
 // ---------------------------------------------------------------------------
 // Odd Saint — data layer
-// Ships with lightweight, DETERMINISTIC mock data so the UI is fully
-// functional out of the box, including a rolling performance history —
-// without needing a backend yet. Every ticket is seeded from its calendar
-// date + tier + slip number, so calling the same day twice always returns
-// identical tickets and identical outcomes.
+// Reads real tickets from Supabase (populated daily by the GitHub Actions
+// pipeline in scripts/generate-tickets.mjs + scripts/grade-tickets.mjs).
+// If no real data exists yet for a given day — e.g. before the pipeline's
+// first run, or a day it couldn't assemble enough fixtures — this falls
+// back to a lightweight, DETERMINISTIC mock generator so the UI never
+// breaks. Every mock ticket is seeded from its calendar date + tier + slip
+// number, so calling the same day twice always returns identical results.
 //
-// IMPORTANT — read before launching to real users:
-// The outcome probabilities and daily slip counts below are PLACEHOLDER
-// constants for demo purposes only. They are not derived from any real
-// prediction model, and the "win rate" they produce is not a genuine track
-// record. Once real grading exists, replace `fetchTickets` /
-// `fetchPerformanceHistory` with queries against real, graded Supabase
-// tables — advertising this mock win rate to paying users as if it were a
-// real historical accuracy figure would be misleading and should be avoided.
+// IMPORTANT: the mock generator's outcome probabilities are PLACEHOLDER
+// constants for demo/fallback purposes only — not a real track record.
+// Real tickets, once the pipeline is running, use real fixtures, real
+// bookmaker-odds-derived confidence, and real graded results instead.
 // ---------------------------------------------------------------------------
+import { supabase } from './supabaseClient';
 
 export type MatchStatus = 'pending' | 'green' | 'red';
+
 
 export type TicketTier =
   | 'mega'
@@ -242,16 +242,87 @@ export function getTicketsForDate(date: Date): Ticket[] {
   return tickets;
 }
 
-/** Fetch all of today's tickets (async wrapper kept for a drop-in Supabase swap later). */
+/**
+ * Reads real, pipeline-generated tickets from Supabase for a given day.
+ * Returns null (rather than an empty array) when there's nothing real to
+ * show yet, so the caller can fall back to mock data instead of rendering
+ * an empty feed.
+ */
+async function fetchRealTicketsForDate(date: Date): Promise<Ticket[] | null> {
+  const day = dateKey(date);
+
+  const { data, error } = await supabase
+    .from('tickets')
+    .select(
+      `id, tier, slip_label, match_count, odds_range, total_odds, is_free,
+       ticket_matches ( sort_order, fixtures ( id, league, home_team, away_team, kickoff, market, odds, confidence, result_status ) )`
+    )
+    .eq('ticket_date', day);
+
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] Supabase ticket query failed, using mock data:', error.message);
+    return null;
+  }
+  if (!data || data.length === 0) return null;
+
+  const tierOrder = TIER_CONFIG.map((c) => c.tier);
+  const tierLabel = (tier: TicketTier) => TIER_CONFIG.find((c) => c.tier === tier)?.label ?? tier;
+
+  const tickets: Ticket[] = data.map((row: any) => {
+    const links = [...(row.ticket_matches ?? [])].sort(
+      (a: any, b: any) => a.sort_order - b.sort_order
+    );
+    const matches: Match[] = links.map((link: any) => {
+      const f = link.fixtures;
+      return {
+        id: String(f.id),
+        league: f.league,
+        homeTeam: f.home_team,
+        awayTeam: f.away_team,
+        market: f.market,
+        odds: f.odds,
+        kickoff: f.kickoff,
+        status: f.result_status as MatchStatus,
+        confidence: f.confidence,
+      };
+    });
+
+    return {
+      id: row.id,
+      tier: row.tier as TicketTier,
+      label: tierLabel(row.tier),
+      slipLabel: row.slip_label ?? undefined,
+      matchCount: row.match_count,
+      oddsRange: row.odds_range,
+      totalOdds: row.total_odds,
+      isFree: row.is_free,
+      matches,
+    };
+  });
+
+  tickets.sort(
+    (a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier) || a.id.localeCompare(b.id)
+  );
+
+  return tickets;
+}
+
+/**
+ * Fetch all of today's tickets — real pipeline data if available, mock data
+ * otherwise (e.g. before the daily generation job has run for this date).
+ */
 export async function fetchTickets(date: Date = new Date()): Promise<Ticket[]> {
-  return getTicketsForDate(date);
+  const real = await fetchRealTicketsForDate(date);
+  return real ?? getTicketsForDate(date);
 }
 
 /**
  * Fetch every slip for one tier on a given day (e.g. all of today's Gold slips).
  */
 export async function fetchTicketsByTier(tier: TicketTier, date: Date = new Date()): Promise<Ticket[]> {
-  return getTicketsForDate(date).filter((t) => t.tier === tier);
+  const all = await fetchTickets(date);
+  return all.filter((t) => t.tier === tier);
 }
 
 /**
@@ -340,16 +411,73 @@ export function getDayPerformance(date: Date): DayPerformance {
 }
 
 /**
+ * One query covering the whole window, grouped by day — real graded
+ * results if present for that day, otherwise the day is simply absent from
+ * the returned map (caller falls back to mock for it).
+ */
+async function fetchRealHistoryRange(days: number): Promise<Map<string, DayPerformance>> {
+  const map = new Map<string, DayPerformance>();
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - (days - 1));
+
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('id, ticket_date, ticket_matches ( fixtures ( result_status ) )')
+    .gte('ticket_date', dateKey(start))
+    .lte('ticket_date', dateKey(today));
+
+  if (error || !data) return map;
+
+  const byDate = new Map<string, any[]>();
+  data.forEach((row: any) => {
+    const key = row.ticket_date;
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key)!.push(row);
+  });
+
+  byDate.forEach((rows, day) => {
+    let won = 0;
+    let failed = 0;
+    let pending = 0;
+
+    rows.forEach((row: any) => {
+      const statuses: MatchStatus[] = (row.ticket_matches ?? [])
+        .map((tm: any) => tm.fixtures?.result_status)
+        .filter(Boolean);
+      if (statuses.length === 0) return;
+      if (statuses.includes('red')) failed++;
+      else if (statuses.every((s: MatchStatus) => s === 'green')) won++;
+      else pending++;
+    });
+
+    const decided = won + failed;
+    map.set(day, {
+      date: day,
+      ticketsGenerated: rows.length,
+      won,
+      failed,
+      pending,
+      winRatePct: decided > 0 ? Math.round((won / decided) * 100) : null,
+    });
+  });
+
+  return map;
+}
+
+/**
  * Returns performance for the last `days` calendar days, most recent first
- * (today is index 0).
+ * (today is index 0). Uses real graded results wherever the pipeline has
+ * already produced them, and mock data for any day it hasn't reached yet.
  */
 export async function fetchPerformanceHistory(days: number = 14): Promise<DayPerformance[]> {
+  const realByDay = await fetchRealHistoryRange(days);
   const history: DayPerformance[] = [];
   const today = new Date();
   for (let i = 0; i < days; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    history.push(getDayPerformance(d));
+    history.push(realByDay.get(dateKey(d)) ?? getDayPerformance(d));
   }
   return history;
 }
