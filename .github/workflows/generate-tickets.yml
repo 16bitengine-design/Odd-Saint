@@ -1,14 +1,14 @@
-name: Odd Saint — Grade Fixtures
+name: Odd Saint — Generate Daily Tickets
 
-# Runs every 3 hours to catch matches as they finish throughout the day.
-# Can also be triggered manually from the Actions tab.
+# Runs once a day, early morning UTC, before most kickoffs. Can also be
+# triggered manually from the Actions tab.
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '0 6 * * *'
   workflow_dispatch: {}
 
 jobs:
-  grade:
+  generate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -23,9 +23,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Grade pending fixtures
+      - name: Generate today's tickets
         env:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: node scripts/grade-tickets.mjs
+        run: node scripts/generate-tickets.mjs
