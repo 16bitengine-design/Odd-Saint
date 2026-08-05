@@ -376,8 +376,7 @@ export function getAnonymousTrialStart(): string {
 // real backend job, swap this to read a `daily_performance` table instead
 // of recomputing it client-side — see the file header note.
 
-export interface DayPerformance {
-  date: string; // 'YYYY-MM-DD'
+export interface TierStats {
   ticketsGenerated: number;
   won: number;
   failed: number;
@@ -386,23 +385,27 @@ export interface DayPerformance {
   winRatePct: number | null;
 }
 
-export function getDayPerformance(date: Date): DayPerformance {
-  const tickets = getTicketsForDate(date);
+export interface DayPerformance {
+  date: string; // 'YYYY-MM-DD'
+  overall: TierStats;
+  byTier: Partial<Record<TicketTier, TierStats>>;
+}
+
+function computeStats(statusesPerTicket: MatchStatus[][]): TierStats {
   let won = 0;
   let failed = 0;
   let pending = 0;
 
-  tickets.forEach((t) => {
-    const status = getTicketStatus(t);
-    if (status === 'green') won++;
-    else if (status === 'red') failed++;
+  statusesPerTicket.forEach((statuses) => {
+    if (statuses.length === 0) return;
+    if (statuses.includes('red')) failed++;
+    else if (statuses.every((s) => s === 'green')) won++;
     else pending++;
   });
 
   const decided = won + failed;
   return {
-    date: dateKey(date),
-    ticketsGenerated: tickets.length,
+    ticketsGenerated: statusesPerTicket.length,
     won,
     failed,
     pending,
@@ -410,10 +413,29 @@ export function getDayPerformance(date: Date): DayPerformance {
   };
 }
 
+export function getDayPerformance(date: Date): DayPerformance {
+  const tickets = getTicketsForDate(date);
+  const statusesOf = (t: Ticket) => t.matches.map((m) => m.status);
+
+  const byTier: Partial<Record<TicketTier, TierStats>> = {};
+  TIER_CONFIG.forEach((config) => {
+    const tierTickets = tickets.filter((t) => t.tier === config.tier);
+    if (tierTickets.length > 0) {
+      byTier[config.tier] = computeStats(tierTickets.map(statusesOf));
+    }
+  });
+
+  return {
+    date: dateKey(date),
+    overall: computeStats(tickets.map(statusesOf)),
+    byTier,
+  };
+}
+
 /**
- * One query covering the whole window, grouped by day — real graded
- * results if present for that day, otherwise the day is simply absent from
- * the returned map (caller falls back to mock for it).
+ * One query covering the whole window, grouped by day and by tier — real
+ * graded results if present for that day, otherwise the day is simply
+ * absent from the returned map (caller falls back to mock for it).
  */
 async function fetchRealHistoryRange(days: number): Promise<Map<string, DayPerformance>> {
   const map = new Map<string, DayPerformance>();
@@ -423,7 +445,7 @@ async function fetchRealHistoryRange(days: number): Promise<Map<string, DayPerfo
 
   const { data, error } = await supabase
     .from('tickets')
-    .select('id, ticket_date, ticket_matches ( fixtures ( result_status ) )')
+    .select('id, ticket_date, tier, ticket_matches ( fixtures ( result_status ) )')
     .gte('ticket_date', dateKey(start))
     .lte('ticket_date', dateKey(today));
 
@@ -436,29 +458,22 @@ async function fetchRealHistoryRange(days: number): Promise<Map<string, DayPerfo
     byDate.get(key)!.push(row);
   });
 
-  byDate.forEach((rows, day) => {
-    let won = 0;
-    let failed = 0;
-    let pending = 0;
+  const statusesOfRow = (row: any): MatchStatus[] =>
+    (row.ticket_matches ?? []).map((tm: any) => tm.fixtures?.result_status).filter(Boolean);
 
-    rows.forEach((row: any) => {
-      const statuses: MatchStatus[] = (row.ticket_matches ?? [])
-        .map((tm: any) => tm.fixtures?.result_status)
-        .filter(Boolean);
-      if (statuses.length === 0) return;
-      if (statuses.includes('red')) failed++;
-      else if (statuses.every((s: MatchStatus) => s === 'green')) won++;
-      else pending++;
+  byDate.forEach((rows, day) => {
+    const byTier: Partial<Record<TicketTier, TierStats>> = {};
+    TIER_CONFIG.forEach((config) => {
+      const tierRows = rows.filter((r: any) => r.tier === config.tier);
+      if (tierRows.length > 0) {
+        byTier[config.tier] = computeStats(tierRows.map(statusesOfRow));
+      }
     });
 
-    const decided = won + failed;
     map.set(day, {
       date: day,
-      ticketsGenerated: rows.length,
-      won,
-      failed,
-      pending,
-      winRatePct: decided > 0 ? Math.round((won / decided) * 100) : null,
+      overall: computeStats(rows.map(statusesOfRow)),
+      byTier,
     });
   });
 
@@ -469,6 +484,7 @@ async function fetchRealHistoryRange(days: number): Promise<Map<string, DayPerfo
  * Returns performance for the last `days` calendar days, most recent first
  * (today is index 0). Uses real graded results wherever the pipeline has
  * already produced them, and mock data for any day it hasn't reached yet.
+ * Each day includes both the overall total and a per-tier breakdown.
  */
 export async function fetchPerformanceHistory(days: number = 14): Promise<DayPerformance[]> {
   const realByDay = await fetchRealHistoryRange(days);
@@ -484,15 +500,20 @@ export async function fetchPerformanceHistory(days: number = 14): Promise<DayPer
 
 /**
  * Aggregate win rate across the last `days` days — a single headline number
- * for the landing hero (e.g. "78% win rate over the last 14 days").
+ * for the landing hero (e.g. "78% win rate over the last 14 days"). Pass a
+ * tier to get that tier's aggregate instead of the overall total.
  */
-export function summarizeHistory(history: DayPerformance[]): {
+export function summarizeHistory(
+  history: DayPerformance[],
+  tier?: TicketTier
+): {
   totalWon: number;
   totalFailed: number;
   winRatePct: number | null;
 } {
-  const totalWon = history.reduce((acc, d) => acc + d.won, 0);
-  const totalFailed = history.reduce((acc, d) => acc + d.failed, 0);
+  const statsOf = (d: DayPerformance) => (tier ? d.byTier[tier] : d.overall);
+  const totalWon = history.reduce((acc, d) => acc + (statsOf(d)?.won ?? 0), 0);
+  const totalFailed = history.reduce((acc, d) => acc + (statsOf(d)?.failed ?? 0), 0);
   const decided = totalWon + totalFailed;
   return {
     totalWon,
