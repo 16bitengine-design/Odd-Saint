@@ -251,19 +251,32 @@ export function getTicketsForDate(date: Date): Ticket[] {
 async function fetchRealTicketsForDate(date: Date): Promise<Ticket[] | null> {
   const day = dateKey(date);
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .select(
-      `id, tier, slip_label, match_count, odds_range, total_odds, is_free,
-       ticket_matches ( sort_order, fixtures ( id, league, home_team, away_team, kickoff, market, odds, confidence, result_status ) )`
-    )
-    .eq('ticket_date', day);
+  let data;
+  try {
+    const result = await supabase
+      .from('tickets')
+      .select(
+        `id, tier, slip_label, match_count, odds_range, total_odds, is_free,
+         ticket_matches ( sort_order, fixtures ( id, league, home_team, away_team, kickoff, market, odds, confidence, result_status ) )`
+      )
+      .eq('ticket_date', day);
 
-  if (error) {
+    if (result.error) {
+      // eslint-disable-next-line no-console
+      console.warn('[Odd Saint] Supabase ticket query failed, using mock data:', result.error.message);
+      return null;
+    }
+    data = result.data;
+  } catch (err) {
+    // A thrown exception (network failure, misconfigured client, etc.) is
+    // different from a clean query error above — catch it here too so any
+    // failure mode falls back to mock data instead of leaving the ticket
+    // feed silently empty.
     // eslint-disable-next-line no-console
-    console.warn('[Odd Saint] Supabase ticket query failed, using mock data:', error.message);
+    console.warn('[Odd Saint] Supabase ticket query threw, using mock data:', err);
     return null;
   }
+
   if (!data || data.length === 0) return null;
 
   const tierOrder = TIER_CONFIG.map((c) => c.tier);
@@ -313,8 +326,16 @@ async function fetchRealTicketsForDate(date: Date): Promise<Ticket[] | null> {
  * otherwise (e.g. before the daily generation job has run for this date).
  */
 export async function fetchTickets(date: Date = new Date()): Promise<Ticket[]> {
-  const real = await fetchRealTicketsForDate(date);
-  return real ?? getTicketsForDate(date);
+  try {
+    const real = await fetchRealTicketsForDate(date);
+    return real ?? getTicketsForDate(date);
+  } catch (err) {
+    // Last-resort safety net — no matter what goes wrong upstream, the
+    // ticket feed should never end up silently empty.
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] fetchTickets failed unexpectedly, using mock data:', err);
+    return getTicketsForDate(date);
+  }
 }
 
 /**
@@ -443,13 +464,23 @@ async function fetchRealHistoryRange(days: number): Promise<Map<string, DayPerfo
   const start = new Date(today);
   start.setDate(start.getDate() - (days - 1));
 
-  const { data, error } = await supabase
-    .from('tickets')
-    .select('id, ticket_date, tier, ticket_matches ( fixtures ( result_status ) )')
-    .gte('ticket_date', dateKey(start))
-    .lte('ticket_date', dateKey(today));
+  let data;
+  try {
+    const result = await supabase
+      .from('tickets')
+      .select('id, ticket_date, tier, ticket_matches ( fixtures ( result_status ) )')
+      .gte('ticket_date', dateKey(start))
+      .lte('ticket_date', dateKey(today));
 
-  if (error || !data) return map;
+    if (result.error) return map;
+    data = result.data;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] Supabase history query threw, using mock data:', err);
+    return map;
+  }
+
+  if (!data) return map;
 
   const byDate = new Map<string, any[]>();
   data.forEach((row: any) => {
