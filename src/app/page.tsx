@@ -282,6 +282,32 @@ function WatchAdOverlay({ onDone, onClose }: { onDone: () => void; onClose: () =
 // Ticket card (accordion) with red/green grading engine
 // ---------------------------------------------------------------------------
 
+/**
+ * Formats a match's kickoff time in whatever timezone the visitor's own
+ * device is set to — Intl.DateTimeFormat uses the browser's local timezone
+ * automatically when no `timeZone` option is passed, so this needs no
+ * manual geo-IP lookup or timezone detection at all. "Today"/"Tomorrow" are
+ * relative to the visitor's own local calendar day, not server time —
+ * important for Weekly Lite/Titan tickets whose matches span several days.
+ */
+function formatKickoff(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+
+  const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date);
+
+  if (date.toDateString() === now.toDateString()) return `Today ${time}`;
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (date.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
+
+  const day = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(
+    date
+  );
+  return `${day}, ${time}`;
+}
+
 function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
   return (
     <div
@@ -314,6 +340,9 @@ function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
           </div>
           <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 1 }}>
             {match.league} · {match.market}
+          </div>
+          <div style={{ fontSize: 10.5, color: COLORS.emerald, marginTop: 2, fontWeight: 600 }}>
+            {formatKickoff(match.kickoff)}
           </div>
         </div>
       </div>
