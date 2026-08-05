@@ -10,10 +10,12 @@ import {
   getAnonymousTrialStart,
   fetchPerformanceHistory,
   summarizeHistory,
+  TIER_CONFIG,
   type Ticket,
   type Match,
   type MatchStatus,
   type DayPerformance,
+  type TicketTier,
 } from '@/lib/dataFetcher';
 
 // ---------------------------------------------------------------------------
@@ -822,7 +824,18 @@ function Hero({
 }
 
 function PerformanceHistory({ history }: { history: DayPerformance[] }) {
+  const [selectedTier, setSelectedTier] = useState<TicketTier | 'all'>('all');
+
   if (history.length === 0) return null;
+
+  const tabs: Array<{ key: TicketTier | 'all'; label: string }> = [
+    { key: 'all', label: 'All' },
+    ...TIER_CONFIG.map((c) => ({ key: c.tier, label: c.label })),
+  ];
+
+  const statsFor = (day: DayPerformance) =>
+    selectedTier === 'all' ? day.overall : day.byTier[selectedTier];
+
   return (
     <div
       style={{
@@ -838,17 +851,56 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
         style={{
           fontFamily: FONT_DISPLAY,
           fontSize: 14,
-          fontWeight: 600,
+          fontWeight: 700,
           color: COLORS.textPrimary,
           marginBottom: 10,
         }}
       >
         Last {history.length} days
       </div>
+
+      {/* Tier filter tabs — horizontally scrollable so all 9 fit on mobile */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          overflowX: 'auto',
+          paddingBottom: 10,
+          marginBottom: 8,
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {tabs.map((tab) => {
+          const active = tab.key === selectedTier;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setSelectedTier(tab.key)}
+              style={{
+                flexShrink: 0,
+                fontFamily: FONT_BODY,
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '5px 11px',
+                borderRadius: 999,
+                border: active ? 'none' : `1px solid ${COLORS.border}`,
+                background: active ? COLORS.emerald : 'transparent',
+                color: active ? '#ffffff' : COLORS.textMuted,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {history.map((day) => {
-          const decided = day.won + day.failed;
-          const wonPct = decided > 0 ? (day.won / decided) * 100 : 0;
+          const stats = statsFor(day);
+          const decided = stats ? stats.won + stats.failed : 0;
+          const wonPct = decided > 0 ? (stats!.won / decided) * 100 : 0;
           return (
             <div key={day.date} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 74, fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>
@@ -874,7 +926,11 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
                 )}
               </div>
               <div style={{ width: 78, fontSize: 10.5, color: COLORS.textMuted, textAlign: 'right', flexShrink: 0 }}>
-                {day.winRatePct !== null ? `${day.winRatePct}% · ${day.ticketsGenerated}` : `${day.ticketsGenerated} live`}
+                {!stats
+                  ? '—'
+                  : stats.winRatePct !== null
+                  ? `${stats.winRatePct}% · ${stats.ticketsGenerated}`
+                  : `${stats.ticketsGenerated} live`}
               </div>
             </div>
           );
