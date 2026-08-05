@@ -1025,8 +1025,18 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    fetchTickets().then(setTickets);
-    fetchPerformanceHistory(14).then(setHistory);
+    fetchTickets()
+      .then(setTickets)
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[Odd Saint] Failed to load tickets:', err);
+      });
+    fetchPerformanceHistory(14)
+      .then(setHistory)
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[Odd Saint] Failed to load performance history:', err);
+      });
   }, []);
 
   // Logged-in users get their trial tied to their account (registeredAt);
