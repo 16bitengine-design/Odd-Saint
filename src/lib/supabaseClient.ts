@@ -7,7 +7,10 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   // Fail loudly in dev so misconfiguration is caught early, but avoid
-  // throwing during static export/build when env vars may not be present.
+  // throwing during build in environments that don't have real credentials
+  // configured (CI checks, a fresh clone before .env.local exists, etc.) —
+  // createClient() validates its URL argument and throws on an empty
+  // string, which would otherwise crash `next build` entirely.
   if (process.env.NODE_ENV === 'development') {
     // eslint-disable-next-line no-console
     console.warn(
@@ -19,9 +22,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Single shared client instance (singleton) — avoids re-instantiating
 // the SDK on every render, keeping memory usage low on mobile devices.
+// Falls back to a syntactically valid placeholder URL so client
+// construction never throws; a client built from the placeholder simply
+// fails auth/data calls at runtime rather than crashing the build.
 export const supabase: SupabaseClient = createClient(
-  supabaseUrl ?? '',
-  supabaseAnonKey ?? '',
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder-anon-key',
   {
     auth: {
       persistSession: true,
