@@ -44,6 +44,24 @@ const MAX_ODDS_LOOKUPS_PER_RUN = 55;
 // so they draw from a real week's worth of matches rather than just today.
 const WEEKLY_LOOKAHEAD_DAYS = 3;
 
+// A curated set of marquee clubs across the covered leagues. Fixtures where
+// BOTH sides are in this set (e.g. Real Madrid vs Barcelona, a Manchester
+// or Milan derby) are skipped entirely — these are inherently the hardest
+// matches to call with real confidence, so the platform avoids building
+// picks around them rather than pretending otherwise.
+const BIG_CLUBS = new Set([
+  'Manchester City', 'Manchester United', 'Liverpool', 'Arsenal', 'Chelsea', 'Tottenham',
+  'Real Madrid', 'Barcelona', 'Atletico Madrid',
+  'Bayern Munich', 'Borussia Dortmund',
+  'Juventus', 'Inter', 'AC Milan', 'Napoli',
+  'Paris Saint Germain', 'PSG',
+  'Ajax', 'Benfica', 'Porto',
+]);
+
+function isBigClash(homeTeam, awayTeam) {
+  return BIG_CLUBS.has(homeTeam) && BIG_CLUBS.has(awayTeam);
+}
+
 const TIER_CONFIG = [
   { tier: 'mega', label: 'Mega Day Ticket', matchCount: 4, oddsRange: '1.5-3', alwaysFree: true },
   { tier: 'bronze', label: 'Bronze', matchCount: 3, oddsRange: '2-3', alwaysFree: false },
@@ -67,7 +85,12 @@ async function fetchPricedFixtures(dates, maxOddsLookups) {
 
   for (const d of dates) {
     const fixtures = await getFixturesForDate(d);
-    const candidates = fixtures.filter((f) => LEAGUE_ALLOWLIST.has(f.league?.id));
+    const candidates = fixtures.filter(
+      (f) =>
+        LEAGUE_ALLOWLIST.has(f.league?.id) &&
+        !isBigClash(f.teams?.home?.name, f.teams?.away?.name) &&
+        !isExcluded(f.teams?.home?.name, f.teams?.away?.name)
+    );
 
     for (const f of candidates) {
       if (oddsLookupsUsed >= maxOddsLookups) break;
@@ -133,6 +156,27 @@ function impliedConfidence(odds) {
 
 // --- Assemble tickets from the priced-fixture pool ---------------------------
 
+// Tiers with fewer than 7 matches favor safer, more heavily-favored picks:
+// their fixture pool is restricted to legs priced at 1.77 or below rather
+// than the full odds range used for Gold and up.
+const SMALL_TICKET_TIERS = new Set(['mega', 'bronze', 'silver']); // matchCount < 7
+const SMALL_TICKET_MAX_ODDS = 1.77;
+
+// Empty by default — add exact team names here (matching API-Football's
+// naming) if there are specific clubs or competitions you want the
+// pipeline to avoid picking entirely, for any reason (integrity concerns,
+// unreliable data, or otherwise). This is a business decision left to you
+// rather than a list Claude fills in, since flagging real clubs by name
+// for something as serious as match-fixing needs to be based on your own
+// verified, current judgment — not baked into the code as an assumption.
+const EXCLUDED_TEAMS = new Set([
+  // 'Example FC',
+]);
+
+function isExcluded(homeTeam, awayTeam) {
+  return EXCLUDED_TEAMS.has(homeTeam) || EXCLUDED_TEAMS.has(awayTeam);
+}
+
 function getDailySlipCount(tier, poolSize) {
   if (tier === 'gold') return 5;
   if (tier === 'mega' || tier === 'bronze' || tier === 'silver') {
@@ -140,6 +184,12 @@ function getDailySlipCount(tier, poolSize) {
     return Math.min(4, Math.max(1, Math.ceil(poolSize / 10)));
   }
   return 1;
+}
+
+/** Narrows the pool to safer, lower-odds picks for tiers under 7 matches. */
+function poolForTier(pool, tier) {
+  if (!SMALL_TICKET_TIERS.has(tier)) return pool;
+  return pool.filter((p) => p.odds <= SMALL_TICKET_MAX_ODDS);
 }
 
 function pickFixturesForSlip(pool, matchCount, offset) {
@@ -159,7 +209,8 @@ function buildTickets(dailyPool, weeklyPool) {
 
   TIER_CONFIG.forEach((config) => {
     const isWeekly = config.tier === 'weekly_lite' || config.tier === 'weekly_titan';
-    const pool = isWeekly ? weeklyPool : dailyPool;
+    const basePool = isWeekly ? weeklyPool : dailyPool;
+    const pool = poolForTier(basePool, config.tier);
     const count = getDailySlipCount(config.tier, dailyPool.length);
 
     for (let i = 0; i < count; i++) {
