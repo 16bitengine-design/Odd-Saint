@@ -35,10 +35,13 @@ const LEAGUE_ALLOWLIST = new Set([
   253, // MLS
 ]);
 
-// Caps how many /odds requests we make per run — keeps you comfortably
-// inside API-Football's free-plan daily request budget (100/day), leaving
-// headroom for the separate grading job later the same day.
-const MAX_ODDS_LOOKUPS_PER_RUN = 55;
+// Caps how many /odds requests we make per pool (daily, then weekly — so a
+// full run uses at most ~2x this many, plus a couple of /fixtures calls).
+// Kept modest because the free plan enforces both a 10-requests/minute
+// throttle (handled in apiFootball.mjs) AND a daily request cap — this
+// leaves headroom for the separate grading job, which runs several times
+// the same day.
+const MAX_ODDS_LOOKUPS_PER_RUN = 25;
 
 // How many extra days ahead to pull fixtures for the two "Weekly" tiers,
 // so they draw from a real week's worth of matches rather than just today.
