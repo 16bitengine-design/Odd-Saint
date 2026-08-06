@@ -92,13 +92,29 @@ function getDailySlipCount(tier: TicketTier, day: string): number {
   return 1;
 }
 
-const LEAGUES = ['EPL', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1', 'UCL'];
-const TEAMS = [
-  'Arsenal', 'Chelsea', 'Real Madrid', 'Barcelona', 'Bayern Munich', 'Dortmund',
-  'AC Milan', 'Inter Milan', 'PSG', 'Marseille', 'Man City', 'Liverpool',
-  'Atletico Madrid', 'Juventus', 'Napoli', 'Leipzig',
-];
-const MARKETS = ['Over 1.5 Goals', 'Home Win', 'Away Win', 'BTTS', 'Draw No Bet', 'Over 2.5 Goals'];
+
+// Teams grouped by their actual real-world domestic league — matches are
+// only ever generated within the same league, so a mock fixture never
+// mislabels which competition a real club actually plays in.
+const LEAGUE_TEAMS: Record<string, string[]> = {
+  EPL: ['Arsenal', 'Chelsea', 'Man City', 'Liverpool'],
+  'La Liga': ['Real Madrid', 'Barcelona', 'Atletico Madrid'],
+  Bundesliga: ['Bayern Munich', 'Dortmund', 'Leipzig'],
+  'Serie A': ['AC Milan', 'Inter Milan', 'Juventus', 'Napoli'],
+  'Ligue 1': ['PSG', 'Marseille'],
+};
+
+// Marquee clubs — picks avoid pairing two of these against each other
+// within the same league, since those fixtures are inherently harder to
+// call with real confidence. Every league above has at least one
+// non-marquee club to fall back to when this triggers.
+const BIG_TEAMS = ['Real Madrid', 'Barcelona', 'Bayern Munich', 'Man City', 'Liverpool', 'PSG', 'Juventus', 'Chelsea'];
+const BIG_TEAM_SET = new Set(BIG_TEAMS);
+
+// "Draw No Bet" and plain "Draw" are deliberately excluded — see the
+// generate-tickets.mjs market catalog for the same rule applied to real
+// picks. Both are considered too low-confidence to build a product around.
+const MARKETS = ['Over 1.5 Goals', 'Home Win', 'Away Win', 'BTTS', 'Over 2.5 Goals'];
 
 // ---------------------------------------------------------------------------
 // Mock outcome probabilities (PLACEHOLDER — see file header note)
@@ -108,6 +124,12 @@ const MARKETS = ['Over 1.5 Goals', 'Home Win', 'Away Win', 'BTTS', 'Draw No Bet'
 // for having more matches — this is mock data, not a real settlement engine).
 // ---------------------------------------------------------------------------
 const OUTCOME_PROBS = { green: 0.74, red: 0.11, pending: 0.15 } as const;
+
+// How long after kickoff a match is treated as "played" — mirrors the real
+// grading job's buffer (see scripts/grade-tickets.mjs). Before this point,
+// a match's status always displays as pending, REGARDLESS of its eventual
+// decided outcome — a match that hasn't been played yet can't have a result.
+const GRADE_BUFFER_MS = 2.5 * 60 * 60 * 1000;
 
 function seededRandom(seed: number) {
   // Deterministic pseudo-random generator — same seed always produces the
@@ -136,14 +158,63 @@ export function dateKey(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-function buildMatch(rand: () => number, index: number, seedOffset: number, forcedStatus: MatchStatus): Match {
-  const league = LEAGUES[Math.floor(rand() * LEAGUES.length)];
-  const home = TEAMS[Math.floor(rand() * TEAMS.length)];
-  let away = TEAMS[Math.floor(rand() * TEAMS.length)];
-  if (away === home) away = TEAMS[(TEAMS.indexOf(away) + 1) % TEAMS.length];
+/**
+ * Spreads mock kickoffs across a realistic matchday window (12:00–20:30 UTC)
+ * on the ticket's actual calendar date, rather than relative to "whenever
+ * this function happened to run" — that's what makes the played/not-played
+ * check below meaningful instead of arbitrary.
+ */
+function getMockKickoff(day: Date, rand: () => number): Date {
+  const hour = 12 + Math.floor(rand() * 9); // 12–20
+  const minute = rand() < 0.5 ? 0 : 30;
+  return new Date(Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute));
+}
+
+function pickTeams(rand: () => number): { home: string; away: string; league: string } {
+  const leagueNames = Object.keys(LEAGUE_TEAMS);
+  const league = leagueNames[Math.floor(rand() * leagueNames.length)];
+  const clubs = LEAGUE_TEAMS[league];
+
+  const home = clubs[Math.floor(rand() * clubs.length)];
+  let away = clubs[Math.floor(rand() * clubs.length)];
+  if (away === home) away = clubs[(clubs.indexOf(away) + 1) % clubs.length];
+
+  // Two marquee clubs facing each other — reroll the away side to a
+  // non-marquee club within the SAME league, so the fixture stays both
+  // gradable with real confidence and correctly labeled for that league.
+  if (BIG_TEAM_SET.has(home) && BIG_TEAM_SET.has(away)) {
+    const regularInLeague = clubs.filter((c) => !BIG_TEAM_SET.has(c));
+    if (regularInLeague.length > 0) {
+      away = regularInLeague[Math.floor(rand() * regularInLeague.length)];
+    }
+  }
+
+  return { home, away, league };
+}
+
+// Tiers with fewer than 7 matches favor safer, more heavily-favored picks —
+// same rule as the real pipeline (scripts/generate-tickets.mjs).
+const SMALL_TICKET_MAX_ODDS = 1.77;
+
+function buildMatch(
+  rand: () => number,
+  index: number,
+  seedOffset: number,
+  forcedStatus: MatchStatus,
+  day: Date,
+  maxOdds: number
+): Match {
+  const { home, away, league } = pickTeams(rand);
   const market = MARKETS[Math.floor(rand() * MARKETS.length)];
-  const odds = Math.round((1.3 + rand() * 2.5) * 100) / 100;
+  const oddsRange = Math.min(maxOdds, 3.8) - 1.3;
+  const odds = Math.round((1.3 + rand() * oddsRange) * 100) / 100;
   const confidence = Math.round(60 + rand() * 38);
+
+  const kickoff = getMockKickoff(day, rand);
+  const hasBeenPlayed = Date.now() > kickoff.getTime() + GRADE_BUFFER_MS;
+  // A match can't show a result before it's actually been played — the
+  // "intended" outcome only applies once real time has caught up to it.
+  const status: MatchStatus = hasBeenPlayed ? forcedStatus : 'pending';
 
   return {
     id: `m-${seedOffset}-${index}`,
@@ -152,16 +223,17 @@ function buildMatch(rand: () => number, index: number, seedOffset: number, force
     awayTeam: away,
     market,
     odds,
-    kickoff: new Date(Date.now() + index * 3600_000).toISOString(),
-    status: forcedStatus,
+    kickoff: kickoff.toISOString(),
+    status,
     confidence,
   };
 }
 
 /** Decide the overall ticket outcome first, then build per-match statuses consistent with it. */
-function buildTicket(config: TierConfig, seed: number, slipLabel?: string): Ticket {
+function buildTicket(config: TierConfig, seed: number, day: Date, slipLabel?: string): Ticket {
   const rand = seededRandom(seed);
   const n = config.matchCount;
+  const maxOdds = n < 7 ? SMALL_TICKET_MAX_ODDS : 3.8;
 
   const outcomeRoll = rand();
   const overall: MatchStatus =
@@ -184,9 +256,10 @@ function buildTicket(config: TierConfig, seed: number, slipLabel?: string): Tick
     }
     if (!anyPending) statuses[0] = 'pending';
   }
-  // overall === 'green' → statuses stays all-green.
+  // overall === 'green' → statuses stays all-green (subject to the
+  // played/not-played gate applied per match inside buildMatch).
 
-  const matches = Array.from({ length: n }, (_, i) => buildMatch(rand, i, seed, statuses[i]));
+  const matches = Array.from({ length: n }, (_, i) => buildMatch(rand, i, seed, statuses[i], day, maxOdds));
   const totalOdds = Math.round(matches.reduce((acc, m) => acc * m.odds, 1) * 100) / 100;
 
   return {
@@ -235,7 +308,7 @@ export function getTicketsForDate(date: Date): Ticket[] {
     for (let i = 0; i < count; i++) {
       const seed = hashSeed(`${day}-${config.tier}-${i}`);
       const slipLabel = count > 1 ? `${i + 1} of ${count}` : undefined;
-      tickets.push(buildTicket(config, seed, slipLabel));
+      tickets.push(buildTicket(config, seed, date, slipLabel));
     }
   });
 
