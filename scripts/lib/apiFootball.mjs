@@ -2,13 +2,41 @@
 // Minimal API-Football (api-football.com / api-sports.io) client.
 // Uses Node's built-in fetch (Node 18+), so no extra dependency is needed.
 //
-// Sign up at https://www.api-football.com — the free plan gives 100
-// requests/day, which is enough for one daily generation run plus a few
-// grading passes if you keep request usage modest (see the LEAGUE
-// allowlist and MAX_FIXTURES cap in generate-tickets.mjs).
+// Sign up at https://www.api-football.com — the free plan enforces a hard
+// rate limit of 10 requests/minute (in addition to a daily cap). This
+// client self-throttles to stay under that, and retries with backoff if a
+// 429 slips through anyway, rather than crashing the whole run.
 // ---------------------------------------------------------------------------
 
 const API_BASE = 'https://v3.football.api-sports.io';
+
+// Free plan allows 10 requests/minute — stay comfortably under that with a
+// safety margin, and share this limiter across every call this process
+// makes (both the daily and weekly fixture pools in the same run).
+const MAX_REQUESTS_PER_WINDOW = 8;
+const WINDOW_MS = 60_000;
+const requestTimestamps = [];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForRateLimit() {
+  const now = Date.now();
+  // Drop timestamps outside the current rolling window.
+  while (requestTimestamps.length > 0 && now - requestTimestamps[0] > WINDOW_MS) {
+    requestTimestamps.shift();
+  }
+  if (requestTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
+    const oldest = requestTimestamps[0];
+    const waitMs = WINDOW_MS - (now - oldest) + 250; // small buffer past the window edge
+    // eslint-disable-next-line no-console
+    console.log(`Rate limit guard: waiting ${Math.ceil(waitMs / 1000)}s before next API-Football request...`);
+    await sleep(waitMs);
+    return waitForRateLimit(); // re-check after waiting, in case more time needs to pass
+  }
+  requestTimestamps.push(Date.now());
+}
 
 function requireApiKey() {
   const key = process.env.API_FOOTBALL_KEY;
@@ -20,16 +48,31 @@ function requireApiKey() {
   return key;
 }
 
-async function apiFootballGet(path, params = {}) {
+async function apiFootballGet(path, params = {}, attempt = 1) {
   const key = requireApiKey();
   const url = new URL(`${API_BASE}${path}`);
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   });
 
+  await waitForRateLimit();
+
   const res = await fetch(url, {
     headers: { 'x-apisports-key': key },
   });
+
+  if (res.status === 429) {
+    const MAX_ATTEMPTS = 4;
+    if (attempt >= MAX_ATTEMPTS) {
+      throw new Error(`API-Football rate limit exceeded after ${attempt} attempts: ${url}`);
+    }
+    const retryAfterHeader = res.headers.get('retry-after');
+    const waitMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : WINDOW_MS;
+    // eslint-disable-next-line no-console
+    console.warn(`429 from API-Football (attempt ${attempt}), waiting ${Math.ceil(waitMs / 1000)}s and retrying...`);
+    await sleep(waitMs);
+    return apiFootballGet(path, params, attempt + 1);
+  }
 
   if (!res.ok) {
     throw new Error(`API-Football request failed (${res.status}): ${url}`);
