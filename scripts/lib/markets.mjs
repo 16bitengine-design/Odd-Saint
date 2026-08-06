@@ -16,7 +16,6 @@ export const MARKET_CATALOG = [
     outcomes: [
       { apiValue: 'Home', marketLabel: 'Home Win', oddsMin: 1.3, oddsMax: 3.5, settle: (h, a) => h > a },
       { apiValue: 'Away', marketLabel: 'Away Win', oddsMin: 1.3, oddsMax: 3.5, settle: (h, a) => a > h },
-      { apiValue: 'Draw', marketLabel: 'Draw', oddsMin: 2.8, oddsMax: 4.2, settle: (h, a) => h === a },
     ],
   },
   {
