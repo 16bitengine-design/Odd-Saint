@@ -104,34 +104,13 @@ function IndemnificationNotice({ compact = false }: { compact?: boolean }) {
       <strong style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, color: COLORS.textPrimary }}>
         Hold-Harmless Indemnification Agreement.
       </strong>{' '}
-      Odd Saint provides AI-generated statistical opinions on football outcomes, expressed only as
-      an "AI Data Confidence Index" percentage — never as a guarantee. Sports outcomes are
+      Odd Saint provides AI-assisted statistical opinions on football outcomes — never a
+      guarantee of any result. Sports outcomes are
       volatile and unpredictable. By using this platform you acknowledge that all decisions made on
       the basis of this content are your own responsibility, and you release Odd Saint, its
       operators, and affiliates from any and all liability for financial losses, damages, or claims
       arising from reliance on this content.
     </div>
-  );
-}
-
-function ConfidenceBadge({ value }: { value: number }) {
-  return (
-    <span
-      style={{
-        fontFamily: FONT_BODY,
-        fontSize: 10.5,
-        fontWeight: 600,
-        color: COLORS.emerald,
-        background: 'rgba(16,185,129,0.08)',
-        border: `1px solid ${COLORS.emerald}40`,
-        borderRadius: 999,
-        padding: '3px 9px',
-        whiteSpace: 'nowrap',
-        letterSpacing: '0.01em',
-      }}
-    >
-      {value}% AI Confidence
-    </span>
   );
 }
 
@@ -360,9 +339,6 @@ function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
           }}
         >
           {match.odds}
-        </div>
-        <div style={{ marginTop: 4 }}>
-          <ConfidenceBadge value={match.confidence} />
         </div>
       </div>
     </div>
@@ -791,7 +767,7 @@ function Hero({
         }}
       >
         Odd Saint offers football predictions only — not a betting operator,
-        not financial advice. Every pick carries an AI confidence index,
+        not financial advice. Every pick is AI-assisted analysis,
         never a guarantee.
       </p>
 
