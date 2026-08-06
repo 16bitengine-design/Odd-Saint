@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Inter } from 'next/font/google';
+import Script from 'next/script';
 
 // Single bold sans-serif family, used everywhere — headlines through data
 // rows. Sportsbook/bookmaker interfaces prioritize fast scanning over
@@ -17,8 +18,13 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'Odd Saint — AI Football Prediction Tickets',
   description:
-    'Curated football prediction tickets with AI-driven confidence ratings. Not financial or betting advice.',
+    'Curated football prediction tickets, AI-assisted and graded in the open. Not financial or betting advice.',
 };
+
+// Set NEXT_PUBLIC_GA_MEASUREMENT_ID in Vercel (and .env.local for dev) once
+// you've created a GA4 property — see .env.local.example. Until it's set,
+// no analytics script loads at all, so the site works identically either way.
+const GA_MEASUREMENT_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -56,6 +62,33 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             outline-offset: 2px;
           }
         `}</style>
+
+        {/*
+          Google Analytics 4. GA4 automatically tracks engagement time and
+          scroll depth per page/session on its own — the custom events fired
+          from src/lib/analytics.ts add the app-specific detail on top (which
+          tier a ticket is, where someone hit a paywall, which unlock method
+          they tried), so both the automatic and custom signals show up
+          together in GA4's reports.
+        */}
+        {GA_MEASUREMENT_ID && (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`}
+              strategy="afterInteractive"
+            />
+            <Script id="ga4-init" strategy="afterInteractive">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){ window.dataLayer.push(arguments); }
+                window.gtag = gtag;
+                gtag('js', new Date());
+                gtag('config', '${GA_MEASUREMENT_ID}');
+              `}
+            </Script>
+          </>
+        )}
+
         {children}
       </body>
     </html>
