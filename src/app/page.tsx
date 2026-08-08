@@ -287,9 +287,18 @@ function formatKickoff(iso: string): string {
   return `${day}, ${time}`;
 }
 
-function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
+function MatchRow({
+  match,
+  blurred,
+  onSelect,
+}: {
+  match: Match;
+  blurred: boolean;
+  onSelect?: (match: Match) => void;
+}) {
   return (
     <div
+      onClick={!blurred && onSelect ? () => onSelect(match) : undefined}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -299,6 +308,7 @@ function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
         gap: 10,
         filter: blurred ? 'blur(5px)' : 'none',
         userSelect: blurred ? 'none' : 'auto',
+        cursor: !blurred && onSelect ? 'pointer' : 'default',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
@@ -345,6 +355,122 @@ function MatchRow({ match, blurred }: { match: Match; blurred: boolean }) {
   );
 }
 
+function MatchAnalysisModal({ match, onClose }: { match: Match; onClose: () => void }) {
+  const statusLabel =
+    match.status === 'green' ? 'Won' : match.status === 'red' ? 'Lost' : 'Pending';
+  const statusLine =
+    match.status === 'green'
+      ? 'This leg landed.'
+      : match.status === 'red'
+      ? "This leg didn't land."
+      : 'Not yet decided — check back after kickoff.';
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 45,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.surface,
+          borderRadius: 14,
+          padding: 22,
+          width: '100%',
+          maxWidth: 380,
+          boxShadow: '0 20px 60px -20px rgba(0,0,0,0.35)',
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            background: 'none',
+            border: 'none',
+            color: COLORS.textMuted,
+            fontSize: 16,
+            cursor: 'pointer',
+          }}
+        >
+          ✕
+        </button>
+
+        <div style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600, marginBottom: 4 }}>
+          {match.league}
+        </div>
+        <h2
+          style={{
+            fontFamily: FONT_DISPLAY,
+            fontSize: 18,
+            fontWeight: 800,
+            color: COLORS.textPrimary,
+            margin: '0 0 6px',
+          }}
+        >
+          {match.homeTeam} vs {match.awayTeam}
+        </h2>
+        <div style={{ fontSize: 12, color: COLORS.emerald, fontWeight: 700, marginBottom: 16 }}>
+          {formatKickoff(match.kickoff)}
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ flex: 1, background: COLORS.surfaceAlt, borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>Market</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.textPrimary }}>{match.market}</div>
+          </div>
+          <div style={{ flex: 1, background: COLORS.surfaceAlt, borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>Odds</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.emerald }}>{match.odds}</div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: COLORS.surfaceAlt,
+            borderRadius: 8,
+            padding: '10px 12px',
+            marginBottom: 14,
+          }}
+        >
+          <StatusDot status={match.status} />
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textPrimary }}>{statusLabel}</div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>{statusLine}</div>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 11.5, color: COLORS.textMuted, lineHeight: 1.6, margin: 0 }}>
+          This pick targets the <strong style={{ color: COLORS.textPrimary }}>{match.market}</strong> market,
+          priced at <strong style={{ color: COLORS.textPrimary }}>{match.odds}</strong> by bookmakers ahead
+          of kickoff. Odds reflect the market's own consensus view — not a guarantee of the outcome.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function TicketCard({
   ticket,
   unlocked,
@@ -352,6 +478,7 @@ function TicketCard({
   onWatchAd,
   onSubscribe,
   onPayPerTicket,
+  onSelectMatch,
 }: {
   ticket: Ticket;
   unlocked: boolean;
@@ -359,6 +486,7 @@ function TicketCard({
   onWatchAd: (ticketId: string) => void;
   onSubscribe: () => void;
   onPayPerTicket: (ticketId: string) => void;
+  onSelectMatch: (match: Match) => void;
 }) {
   const [open, setOpen] = useState(false);
   const overallStatus = getTicketStatus(ticket);
@@ -547,7 +675,7 @@ function TicketCard({
           ) : (
             <div>
               {ticket.matches.map((m) => (
-                <MatchRow key={m.id} match={m} blurred={false} />
+                <MatchRow key={m.id} match={m} blurred={false} onSelect={onSelectMatch} />
               ))}
             </div>
           )}
@@ -710,6 +838,27 @@ function LoginModal({ onSent, onClose }: { onSent: (email: string) => void; onCl
   );
 }
 
+/**
+ * The daily ticket-generation job runs at 06:00 UTC (see
+ * .github/workflows/generate-tickets.yml). This converts that fixed UTC
+ * anchor into whatever timezone the visitor's own device is set to — same
+ * technique as formatKickoff — so every user sees the correct local time
+ * for when fresh tickets drop, regardless of where they are.
+ */
+function getDailyRefreshInfo(): { timeLabel: string; hasRefreshedToday: boolean } {
+  const now = new Date();
+  const refreshUTC = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 6, 0)
+  );
+  const timeLabel = new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(refreshUTC);
+
+  return { timeLabel, hasRefreshedToday: now.getTime() >= refreshUTC.getTime() };
+}
+
 function Hero({
   bronzeCount,
   goldCount,
@@ -721,6 +870,8 @@ function Hero({
   winRatePct: number | null;
   onViewHistory: () => void;
 }) {
+  const { timeLabel, hasRefreshedToday } = getDailyRefreshInfo();
+
   return (
     <div
       style={{
@@ -762,7 +913,7 @@ function Hero({
           fontSize: 12.5,
           color: 'rgba(255,255,255,0.85)',
           maxWidth: 360,
-          margin: '0 auto 18px',
+          margin: '0 auto 14px',
           lineHeight: 1.5,
         }}
       >
@@ -770,6 +921,39 @@ function Hero({
         not financial advice. Every pick is AI-assisted analysis,
         never a guarantee.
       </p>
+
+      {/* Refresh-schedule indicator — always visible, converted to the
+          visitor's own local time, so nobody has to guess when to check
+          back for a fresh batch. */}
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(255,255,255,0.14)',
+          borderRadius: 999,
+          padding: '5px 12px',
+          marginBottom: 16,
+          fontFamily: FONT_BODY,
+          fontSize: 11,
+          fontWeight: 600,
+          color: '#ffffff',
+        }}
+      >
+        <span
+          className={hasRefreshedToday ? undefined : 'live-pulse'}
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 999,
+            background: '#ffffff',
+            display: 'inline-block',
+          }}
+        />
+        {hasRefreshedToday
+          ? `Today's tickets are live · next refresh ${timeLabel} tomorrow`
+          : `New tickets drop today at ${timeLabel}`}
+      </div>
 
       <div
         style={{
@@ -992,6 +1176,7 @@ export default function Page() {
   const [registeredAt, setRegisteredAt] = useState<string | null>(null);
   const [anonTrialStart, setAnonTrialStart] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [history, setHistory] = useState<DayPerformance[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -1206,6 +1391,7 @@ export default function Page() {
               onWatchAd={handleWatchAd}
               onSubscribe={handleSubscribe}
               onPayPerTicket={handlePayPerTicket}
+              onSelectMatch={setSelectedMatch}
             />
           )
         )}
@@ -1231,6 +1417,11 @@ export default function Page() {
           }}
           onClose={() => setShowLoginModal(false)}
         />
+      )}
+
+      {/* Tap-to-analyze modal — reads only data already in memory, no extra API calls */}
+      {selectedMatch && (
+        <MatchAnalysisModal match={selectedMatch} onClose={() => setSelectedMatch(null)} />
       )}
     </div>
   );
