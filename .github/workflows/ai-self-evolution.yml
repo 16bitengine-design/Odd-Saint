@@ -1,7 +1,8 @@
 name: Odd Saint — Weekly Maintenance Sweep
 
-# Runs every Monday at 03:00 UTC. Can also be triggered manually from the
-# Actions tab for on-demand runs.
+# Runs every Monday at 03:00 UTC.
+# Can also be triggered manually from the Actions tab.
+
 on:
   schedule:
     - cron: '0 3 * * 1'
@@ -14,6 +15,7 @@ permissions:
 jobs:
   maintenance-sweep:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,6 +24,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
 
       - name: Install dependencies
         run: npm install
@@ -29,6 +32,7 @@ jobs:
       - name: Repository layout sweep
         run: |
           echo "## Repository file inventory" >> "$GITHUB_STEP_SUMMARY"
+
           find . -type f \
             -not -path './node_modules/*' \
             -not -path './.git/*' \
@@ -37,17 +41,22 @@ jobs:
 
       - name: Dependency audit (report only)
         run: |
+          echo "## Dependency Audit" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Outdated dependencies" >> "$GITHUB_STEP_SUMMARY"
           npm outdated || true
+
+          echo "### Security audit" >> "$GITHUB_STEP_SUMMARY"
           npm audit --audit-level=high || true
 
       - name: Apply safe, non-breaking dependency updates
         run: |
-          npx npm-check-updates -u --target minor
+          npx --yes npm-check-updates -u --target minor
           npm install
 
       - name: Run lint and build to verify the update is safe
         run: |
-          npm run lint --if-present || true
+          npm run lint --if-present
           npm run build --if-present
 
       - name: Open a pull request with any changes
@@ -57,10 +66,14 @@ jobs:
           title: 'Weekly maintenance: dependency updates'
           body: |
             Automated weekly sweep results:
-            - Ran `npm outdated` / `npm audit` (see workflow logs)
-            - Applied safe minor/patch dependency updates
-            - Verified `lint` and `build` still pass
 
-            Please review before merging — this PR does not auto-merge.
+            - Ran `npm outdated`
+            - Ran `npm audit`
+            - Applied minor/patch dependency updates
+            - Verified lint and build
+
+            Please review before merging.
+            This PR does not auto-merge.
+
           branch: chore/weekly-maintenance-sweep
           delete-branch: true
