@@ -80,6 +80,21 @@ const TIER_CONFIG = [
   { tier: 'weekly_titan', label: 'Weekly Titan', matchCount: 30, oddsRange: 'Mixed', alwaysFree: false },
 ];
 
+// Numeric cumulative-odds targets matching each tier's oddsRange label
+// above. These are ACTUALLY ENFORCED during slip assembly (see
+// pickFixturesForSlip) — previously oddsRange was just a display string
+// with nothing checking whether a ticket's real combined odds landed
+// inside it. Weekly Lite/Titan are intentionally left unset ("Mixed" by
+// design, no fixed target).
+const TIER_ODDS_TARGET = {
+  mega: [1.5, 3],
+  bronze: [2, 3],
+  silver: [3, 5],
+  gold: [5, 10],
+  platinum: [25, 300],
+  diamond: [300, Infinity],
+};
+
 function dateStr(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -192,10 +207,21 @@ function isExcluded(homeTeam, awayTeam) {
   return EXCLUDED_TEAMS.has(homeTeam) || EXCLUDED_TEAMS.has(awayTeam);
 }
 
-function getDailySlipCount(tier, poolSize) {
+/** Saturday or Sunday, checked in UTC (matches the pipeline's other date handling). */
+function isWeekend(date) {
+  const day = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  return day === 0 || day === 6;
+}
+
+function getDailySlipCount(tier, poolSize, date) {
   if (tier === 'gold') return 5;
   if (tier === 'mega' || tier === 'bronze' || tier === 'silver') {
-    // More real fixtures available today → more slips, capped at 4.
+    // Weekends carry far more real fixtures across every league, so the
+    // platform always generates the maximum slip count on Sat/Sun rather
+    // than scaling it down — no reason to under-produce on the busiest
+    // football days of the week.
+    if (isWeekend(date)) return 4;
+    // Weekdays scale with how many real fixtures are actually available today.
     return Math.min(4, Math.max(1, Math.ceil(poolSize / 10)));
   }
   return 1;
@@ -213,41 +239,74 @@ function poolForTier(pool, tier) {
 // takes down the whole day's slate at once instead of just a few tickets.
 const MAX_FIXTURE_APPEARANCES_PER_DAY = 3;
 
+function computeTotalOdds(picks) {
+  return Math.round(picks.reduce((acc, p) => acc * p.odds, 1) * 100) / 100;
+}
+
 /**
  * Picks fixtures for one slip, preferring whichever fixtures in the pool
  * have been used the LEAST so far today (ties broken by lowest odds, i.e.
- * safest first). Fixtures that have already hit MAX_FIXTURE_APPEARANCES_PER_DAY
- * are skipped rather than reused further. `usageCount` is shared and
- * mutated across every slip/tier for the day, which is what makes this a
- * cross-ticket cap rather than a per-slip one.
+ * safest first) as a starting point — then, if the tier has a target
+ * cumulative-odds range (see TIER_ODDS_TARGET), swaps picks in and out of
+ * that starting selection to nudge the combined odds toward that range.
+ * This is what makes a tier's oddsRange (e.g. Bronze "2-3") an actually
+ * enforced target rather than just a display label. Not a full optimizer —
+ * a handful of greedy swap passes — but meaningfully more accurate than
+ * ignoring the target entirely. If the pool doesn't have enough variety to
+ * get reasonably close even after swapping, the slip is dropped rather
+ * than shipped mislabeled.
  */
-function pickFixturesForSlip(pool, matchCount, usageCount) {
-  if (pool.length === 0) return [];
+function pickFixturesForSlip(pool, matchCount, usageCount, targetRange) {
+  const eligible = pool.filter((f) => (usageCount.get(f.fixtureId) ?? 0) < MAX_FIXTURE_APPEARANCES_PER_DAY);
+  if (eligible.length < matchCount) return [];
 
-  const ranked = [...pool].sort((a, b) => {
+  const ranked = [...eligible].sort((a, b) => {
     const usedA = usageCount.get(a.fixtureId) ?? 0;
     const usedB = usageCount.get(b.fixtureId) ?? 0;
     if (usedA !== usedB) return usedA - usedB; // least-used first
     return a.odds - b.odds; // then safest first
   });
 
-  const picks = [];
-  for (const fixture of ranked) {
-    if (picks.length >= matchCount) break;
-    const used = usageCount.get(fixture.fixtureId) ?? 0;
-    if (used >= MAX_FIXTURE_APPEARANCES_PER_DAY) continue;
-    picks.push(fixture);
+  let picks = ranked.slice(0, matchCount);
+  let unused = ranked.slice(matchCount);
+
+  if (targetRange) {
+    const [minTotal, maxTotal] = targetRange;
+    const MAX_SWAP_ATTEMPTS = 8;
+
+    for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
+      const total = computeTotalOdds(picks);
+      if (total >= minTotal && total <= maxTotal) break;
+
+      if (total < minTotal) {
+        // Swap out the lowest-odds pick for a higher-odds unused fixture, to raise the total.
+        const lowestIdx = picks.reduce((li, p, i) => (p.odds < picks[li].odds ? i : li), 0);
+        const candidate = unused.find((f) => f.odds > picks[lowestIdx].odds);
+        if (!candidate) break; // nothing left that would raise the total further
+        picks[lowestIdx] = candidate;
+        unused = unused.filter((f) => f !== candidate);
+      } else {
+        // Swap out the highest-odds pick for a lower-odds unused fixture, to bring the total down.
+        const highestIdx = picks.reduce((hi, p, i) => (p.odds > picks[hi].odds ? i : hi), 0);
+        const candidate = [...unused].sort((a, b) => a.odds - b.odds).find((f) => f.odds < picks[highestIdx].odds);
+        if (!candidate) break;
+        picks[highestIdx] = candidate;
+        unused = unused.filter((f) => f !== candidate);
+      }
+    }
+
+    const finalTotal = computeTotalOdds(picks);
+    const TOLERANCE = 0.3; // 30% slack either side of the target band
+    const withinTolerance = finalTotal >= minTotal * (1 - TOLERANCE) && finalTotal <= maxTotal * (1 + TOLERANCE);
+    if (!withinTolerance) return []; // pool doesn't have enough spread to hit this tier's range today
   }
 
-  // Pool too small to fill this slip while respecting the cap — better to
-  // ship a shorter slip's worth of unique matches than force more reuse of
-  // an already-heavily-used fixture. The caller drops slips that end up
-  // short, rather than padding them out.
   return picks;
 }
 
 function buildTickets(dailyPool, weeklyPool) {
-  const today = dateStr(new Date());
+  const now = new Date();
+  const today = dateStr(now);
   const tickets = [];
   const ticketMatches = [];
   const fixturesUsed = new Map();
@@ -257,10 +316,11 @@ function buildTickets(dailyPool, weeklyPool) {
     const isWeekly = config.tier === 'weekly_lite' || config.tier === 'weekly_titan';
     const basePool = isWeekly ? weeklyPool : dailyPool;
     const pool = poolForTier(basePool, config.tier);
-    const count = getDailySlipCount(config.tier, dailyPool.length);
+    const count = getDailySlipCount(config.tier, dailyPool.length, now);
+    const targetRange = TIER_ODDS_TARGET[config.tier] ?? null;
 
     for (let i = 0; i < count; i++) {
-      const picks = pickFixturesForSlip(pool, config.matchCount, usageCount);
+      const picks = pickFixturesForSlip(pool, config.matchCount, usageCount, targetRange);
       if (picks.length < config.matchCount) continue; // not enough diverse, high-confidence fixtures today — skip this slip rather than force it
 
       picks.forEach((p) => {
