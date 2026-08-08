@@ -850,13 +850,64 @@ function getDailyRefreshInfo(): { timeLabel: string; hasRefreshedToday: boolean 
   const refreshUTC = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 6, 0)
   );
+  // Plain local clock time — no "GMT+3" style suffix, since most people
+  // read "8:00 AM" instantly but have to stop and think about a raw UTC
+  // offset abbreviation.
   const timeLabel = new Intl.DateTimeFormat(undefined, {
     hour: '2-digit',
     minute: '2-digit',
-    timeZoneName: 'short',
   }).format(refreshUTC);
 
   return { timeLabel, hasRefreshedToday: now.getTime() >= refreshUTC.getTime() };
+}
+
+/**
+ * Infers a broad region from the visitor's own device timezone —
+ * IANA zone names are structured as "Continent/City" (e.g. "Africa/Lagos",
+ * "Europe/London", "Asia/Manila"), which the browser already knows with
+ * zero permission prompts and zero API calls. "America/..." is split into
+ * North vs South via a city lookup, since IANA doesn't separate them by
+ * prefix alone.
+ *
+ * This is detection infrastructure for regional ticket filtering — tickets
+ * aren't filtered by region yet (that needs real per-region league data in
+ * the pipeline first), but the region is already surfaced in the UI so the
+ * groundwork is visible and testable.
+ */
+export type Region = 'Africa' | 'Europe' | 'Asia' | 'North America' | 'South America' | 'Oceania' | 'Unknown';
+
+const SOUTH_AMERICA_CITIES = new Set([
+  'Sao_Paulo', 'Argentina', 'Buenos_Aires', 'Bogota', 'Lima', 'Santiago',
+  'Caracas', 'La_Paz', 'Montevideo', 'Asuncion', 'Guyana', 'Manaus', 'Recife',
+]);
+
+function detectRegion(): Region {
+  let timeZone: string;
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; // e.g. "Africa/Lagos"
+  } catch {
+    return 'Unknown';
+  }
+
+  const [continent, cityOrArea] = timeZone.split('/');
+
+  switch (continent) {
+    case 'Africa':
+      return 'Africa';
+    case 'Europe':
+      return 'Europe';
+    case 'Asia':
+      return 'Asia';
+    case 'Australia':
+    case 'Pacific':
+      return 'Oceania';
+    case 'America': {
+      const isSouth = [...SOUTH_AMERICA_CITIES].some((c) => cityOrArea?.includes(c));
+      return isSouth ? 'South America' : 'North America';
+    }
+    default:
+      return 'Unknown';
+  }
 }
 
 function Hero({
@@ -871,6 +922,7 @@ function Hero({
   onViewHistory: () => void;
 }) {
   const { timeLabel, hasRefreshedToday } = getDailyRefreshInfo();
+  const region = detectRegion();
 
   return (
     <div
@@ -954,6 +1006,19 @@ function Hero({
           ? `Today's tickets are live · next refresh ${timeLabel} tomorrow`
           : `New tickets drop today at ${timeLabel}`}
       </div>
+
+      {region !== 'Unknown' && (
+        <div
+          style={{
+            fontFamily: FONT_BODY,
+            fontSize: 10.5,
+            color: 'rgba(255,255,255,0.7)',
+            marginBottom: 16,
+          }}
+        >
+          Browsing from {region} · regional ticket picks coming soon
+        </div>
+      )}
 
       <div
         style={{
