@@ -43,9 +43,13 @@ const LEAGUE_ALLOWLIST = new Set([
 // the same day.
 const MAX_ODDS_LOOKUPS_PER_RUN = 25;
 
-// How many extra days ahead to pull fixtures for the two "Weekly" tiers,
-// so they draw from a real week's worth of matches rather than just today.
-const WEEKLY_LOOKAHEAD_DAYS = 3;
+// How many extra days ahead to pull fixtures for the two "Weekly" tiers.
+// API-Football's FREE plan only allows querying a narrow window around
+// today (typically yesterday through tomorrow) — requesting further out
+// returns a "Free plans do not have access to this date" error. Set to 1
+// to stay within that window; if you upgrade your API plan later, this can
+// go back up to pull a genuine week's worth of fixtures.
+const WEEKLY_LOOKAHEAD_DAYS = 1;
 
 // A curated set of marquee clubs across the covered leagues. Fixtures where
 // BOTH sides are in this set (e.g. Real Madrid vs Barcelona, a Manchester
@@ -131,15 +135,20 @@ async function fetchPricedFixtures(dates, maxOddsLookups) {
   return Array.from(seen.values()).sort((a, b) => b.confidence - a.confidence);
 }
 
+// A fixture is skipped entirely if nothing viable clears this confidence
+// floor — better to generate one fewer match, or even skip a slip, than to
+// force in a pick the market itself doesn't consider a clear favorite.
+const MIN_CONFIDENCE = 62;
+
 /**
  * SELECTION STRATEGY (odds → market pick):
  * Checks every market in the shared catalog (Match Winner, Goals
  * Over/Under, Both Teams Score, Double Chance) against this fixture's
- * bookmaker odds, keeps whichever outcomes fall in a sane odds band for
- * their market, and picks randomly among the viable ones — so the feed
- * shows a genuine mix of market types instead of defaulting to the same
- * one or two every time. Skips the fixture entirely if nothing's viable
- * rather than forcing a low-quality pick.
+ * bookmaker odds, and takes the SAFEST viable outcome — i.e. whichever
+ * has the lowest odds / highest implied confidence — rather than picking
+ * randomly among them. Skips the fixture entirely if nothing clears
+ * MIN_CONFIDENCE, rather than forcing a low-quality pick just to fill a
+ * ticket.
  */
 function pickMarketFromOdds(oddsResponse) {
   const bookmaker = oddsResponse?.[0]?.bookmakers?.[0];
@@ -148,8 +157,11 @@ function pickMarketFromOdds(oddsResponse) {
   const viable = collectViableOutcomes(bookmaker.bets);
   if (viable.length === 0) return null;
 
-  const chosen = viable[Math.floor(Math.random() * viable.length)];
-  return { market: chosen.market, odds: chosen.odds, confidence: impliedConfidence(chosen.odds) };
+  const chosen = viable.sort((a, b) => a.odds - b.odds)[0]; // lowest odds = safest
+  const confidence = impliedConfidence(chosen.odds);
+  if (confidence < MIN_CONFIDENCE) return null; // too uncertain even at its safest — skip this fixture
+
+  return { market: chosen.market, odds: chosen.odds, confidence };
 }
 
 function impliedConfidence(odds) {
@@ -195,12 +207,42 @@ function poolForTier(pool, tier) {
   return pool.filter((p) => p.odds <= SMALL_TICKET_MAX_ODDS);
 }
 
-function pickFixturesForSlip(pool, matchCount, offset) {
+// No single match can appear in more than this many of the day's tickets,
+// across every tier combined. Without this cap, a small fixture pool can
+// end up reused in nearly every ticket — meaning one unexpected result
+// takes down the whole day's slate at once instead of just a few tickets.
+const MAX_FIXTURE_APPEARANCES_PER_DAY = 3;
+
+/**
+ * Picks fixtures for one slip, preferring whichever fixtures in the pool
+ * have been used the LEAST so far today (ties broken by lowest odds, i.e.
+ * safest first). Fixtures that have already hit MAX_FIXTURE_APPEARANCES_PER_DAY
+ * are skipped rather than reused further. `usageCount` is shared and
+ * mutated across every slip/tier for the day, which is what makes this a
+ * cross-ticket cap rather than a per-slip one.
+ */
+function pickFixturesForSlip(pool, matchCount, usageCount) {
   if (pool.length === 0) return [];
+
+  const ranked = [...pool].sort((a, b) => {
+    const usedA = usageCount.get(a.fixtureId) ?? 0;
+    const usedB = usageCount.get(b.fixtureId) ?? 0;
+    if (usedA !== usedB) return usedA - usedB; // least-used first
+    return a.odds - b.odds; // then safest first
+  });
+
   const picks = [];
-  for (let i = 0; i < matchCount; i++) {
-    picks.push(pool[(offset + i) % pool.length]); // wraps around if the pool is smaller than needed
+  for (const fixture of ranked) {
+    if (picks.length >= matchCount) break;
+    const used = usageCount.get(fixture.fixtureId) ?? 0;
+    if (used >= MAX_FIXTURE_APPEARANCES_PER_DAY) continue;
+    picks.push(fixture);
   }
+
+  // Pool too small to fill this slip while respecting the cap — better to
+  // ship a shorter slip's worth of unique matches than force more reuse of
+  // an already-heavily-used fixture. The caller drops slips that end up
+  // short, rather than padding them out.
   return picks;
 }
 
@@ -209,6 +251,7 @@ function buildTickets(dailyPool, weeklyPool) {
   const tickets = [];
   const ticketMatches = [];
   const fixturesUsed = new Map();
+  const usageCount = new Map(); // shared across every tier/slip for the day
 
   TIER_CONFIG.forEach((config) => {
     const isWeekly = config.tier === 'weekly_lite' || config.tier === 'weekly_titan';
@@ -217,11 +260,13 @@ function buildTickets(dailyPool, weeklyPool) {
     const count = getDailySlipCount(config.tier, dailyPool.length);
 
     for (let i = 0; i < count; i++) {
-      const offset = i * config.matchCount;
-      const picks = pickFixturesForSlip(pool, config.matchCount, offset);
-      if (picks.length < config.matchCount) continue; // not enough real fixtures today — skip this slip
+      const picks = pickFixturesForSlip(pool, config.matchCount, usageCount);
+      if (picks.length < config.matchCount) continue; // not enough diverse, high-confidence fixtures today — skip this slip rather than force it
 
-      picks.forEach((p) => fixturesUsed.set(p.fixtureId, p));
+      picks.forEach((p) => {
+        fixturesUsed.set(p.fixtureId, p);
+        usageCount.set(p.fixtureId, (usageCount.get(p.fixtureId) ?? 0) + 1);
+      });
 
       const totalOdds = Math.round(picks.reduce((acc, p) => acc * p.odds, 1) * 100) / 100;
       const ticketId = `${today}-${config.tier}-${i}`;
