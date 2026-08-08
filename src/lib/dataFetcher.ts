@@ -79,13 +79,22 @@ export const TIER_CONFIG: TierConfig[] = [
 // - Gold ships a fixed 5 slips a day.
 // - Tiers with 5 matches or fewer (Mega, Bronze, Silver) scale from 1 up to
 //   4 slips a day depending on how many fixtures are "available" that day
-//   (a deterministic per-day busyness factor — more fixtures, more slips).
+//   (a deterministic per-day busyness factor — more fixtures, more slips) —
+//   except on weekends, where the platform always ships the maximum (4),
+//   matching the real pipeline's rule since weekends carry far more real
+//   fixtures across every league.
 // - Everything else (Platinum, Diamond, Weekly Lite, Weekly Titan) ships 1
 //   curated slip a day, since these are large accumulators by nature.
 
-function getDailySlipCount(tier: TicketTier, day: string): number {
+function isWeekend(date: Date): boolean {
+  const day = date.getDay(); // 0 = Sunday, 6 = Saturday
+  return day === 0 || day === 6;
+}
+
+function getDailySlipCount(tier: TicketTier, day: string, date: Date): number {
   if (tier === 'gold') return 5;
   if (tier === 'mega' || tier === 'bronze' || tier === 'silver') {
+    if (isWeekend(date)) return 4;
     const busyness = hashSeed(`${day}-busyness`) / 233280; // deterministic 0..1
     return 1 + Math.round(busyness * 3); // 1..4, maxing out on "busy" days
   }
@@ -229,6 +238,44 @@ function buildMatch(
   };
 }
 
+// Numeric cumulative-odds targets matching each tier's oddsRange label.
+// Mirrors TIER_ODDS_TARGET in scripts/generate-tickets.mjs — mock data
+// should behave the same way real data does. Weekly Lite/Titan
+// intentionally left unset ("Mixed" by design, no fixed target).
+const TIER_ODDS_TARGET: Partial<Record<TicketTier, [number, number]>> = {
+  mega: [1.5, 3],
+  bronze: [2, 3],
+  silver: [3, 5],
+  gold: [5, 10],
+  platinum: [25, 300],
+  diamond: [300, Infinity],
+};
+
+/**
+ * Scales every leg's odds toward the tier's target cumulative range,
+ * clamped within [minLegOdds, maxLegOdds] per leg. Mock data has no fixed
+ * "pool" to swap picks in and out of like the real pipeline does, so this
+ * solves directly for the multiplicative factor needed instead.
+ */
+function adjustOddsToTarget(matches: Match[], targetRange: [number, number] | undefined, minLegOdds: number, maxLegOdds: number) {
+  if (!targetRange) return;
+  const [minTotal, maxTotal] = targetRange;
+
+  for (let pass = 0; pass < 6; pass++) {
+    const total = matches.reduce((acc, m) => acc * m.odds, 1);
+    if (total >= minTotal && total <= maxTotal) return;
+
+    const target = total < minTotal ? minTotal : maxTotal;
+    if (!Number.isFinite(target)) return; // diamond's upper bound is Infinity — nothing to scale toward
+    const factorPerLeg = Math.pow(target / total, 1 / matches.length);
+
+    matches.forEach((m) => {
+      const scaled = m.odds * factorPerLeg;
+      m.odds = Math.round(Math.min(maxLegOdds, Math.max(minLegOdds, scaled)) * 100) / 100;
+    });
+  }
+}
+
 /** Decide the overall ticket outcome first, then build per-match statuses consistent with it. */
 function buildTicket(config: TierConfig, seed: number, day: Date, slipLabel?: string): Ticket {
   const rand = seededRandom(seed);
@@ -260,6 +307,7 @@ function buildTicket(config: TierConfig, seed: number, day: Date, slipLabel?: st
   // played/not-played gate applied per match inside buildMatch).
 
   const matches = Array.from({ length: n }, (_, i) => buildMatch(rand, i, seed, statuses[i], day, maxOdds));
+  adjustOddsToTarget(matches, TIER_ODDS_TARGET[config.tier], 1.3, maxOdds);
   const totalOdds = Math.round(matches.reduce((acc, m) => acc * m.odds, 1) * 100) / 100;
 
   return {
@@ -304,7 +352,7 @@ export function getTicketsForDate(date: Date): Ticket[] {
   const tickets: Ticket[] = [];
 
   TIER_CONFIG.forEach((config) => {
-    const count = getDailySlipCount(config.tier, day);
+    const count = getDailySlipCount(config.tier, day, date);
     for (let i = 0; i < count; i++) {
       const seed = hashSeed(`${day}-${config.tier}-${i}`);
       const slipLabel = count > 1 ? `${i + 1} of ${count}` : undefined;
