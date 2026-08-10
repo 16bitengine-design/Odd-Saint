@@ -10,12 +10,20 @@ import {
   getAnonymousTrialStart,
   fetchPerformanceHistory,
   summarizeHistory,
+  fetchTeamHistory,
+  webSearchUrlForTeam,
+  getArchiveAccess,
+  dateKey,
   TIER_CONFIG,
+  ANONYMOUS_TRIAL_DAYS,
+  SIGNED_UP_TRIAL_DAYS,
   type Ticket,
   type Match,
   type MatchStatus,
   type DayPerformance,
   type TicketTier,
+  type TeamFormSummary,
+  type ArchiveAccess,
 } from '@/lib/dataFetcher';
 
 // ---------------------------------------------------------------------------
@@ -330,9 +338,22 @@ function MatchRow({
           <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 1 }}>
             {match.league} · {match.market}
           </div>
-          <div style={{ fontSize: 10.5, color: COLORS.emerald, marginTop: 2, fontWeight: 600 }}>
-            {formatKickoff(match.kickoff)}
-          </div>
+          {match.finalHomeScore !== undefined && match.finalAwayScore !== undefined ? (
+            <div
+              style={{
+                fontSize: 11,
+                color: match.status === 'green' ? COLORS.emerald : COLORS.red,
+                marginTop: 2,
+                fontWeight: 700,
+              }}
+            >
+              FT {match.finalHomeScore}-{match.finalAwayScore}
+            </div>
+          ) : (
+            <div style={{ fontSize: 10.5, color: COLORS.emerald, marginTop: 2, fontWeight: 600 }}>
+              {formatKickoff(match.kickoff)}
+            </div>
+          )}
         </div>
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -441,6 +462,14 @@ function MatchAnalysisModal({ match, onClose }: { match: Match; onClose: () => v
             <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>Odds</div>
             <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.emerald }}>{match.odds}</div>
           </div>
+          {match.finalHomeScore !== undefined && match.finalAwayScore !== undefined && (
+            <div style={{ flex: 1, background: COLORS.surfaceAlt, borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>Final Score</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.textPrimary }}>
+                {match.finalHomeScore}-{match.finalAwayScore}
+              </div>
+            </div>
+          )}
         </div>
 
         <div
@@ -471,10 +500,254 @@ function MatchAnalysisModal({ match, onClose }: { match: Match; onClose: () => v
   );
 }
 
+function ResultBadge({ result }: { result: 'W' | 'D' | 'L' }) {
+  const color = result === 'W' ? COLORS.emerald : result === 'L' ? COLORS.red : COLORS.amber;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 20,
+        height: 20,
+        borderRadius: 5,
+        background: color,
+        color: '#ffffff',
+        fontFamily: FONT_BODY,
+        fontSize: 10.5,
+        fontWeight: 800,
+        flexShrink: 0,
+      }}
+    >
+      {result}
+    </span>
+  );
+}
+
+function TeamSearchModal({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const [searchedTeam, setSearchedTeam] = useState<string | null>(null);
+  const [result, setResult] = useState<TeamFormSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSearch(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setLoading(true);
+    setSearchedTeam(trimmed);
+    const history = await fetchTeamHistory(trimmed);
+    setResult(history);
+    setLoading(false);
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 45,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        padding: 20,
+        paddingTop: '10vh',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.surface,
+          borderRadius: 14,
+          padding: 22,
+          width: '100%',
+          maxWidth: 420,
+          maxHeight: '75vh',
+          overflowY: 'auto',
+          boxShadow: '0 20px 60px -20px rgba(0,0,0,0.35)',
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            background: 'none',
+            border: 'none',
+            color: COLORS.textMuted,
+            fontSize: 16,
+            cursor: 'pointer',
+          }}
+        >
+          ✕
+        </button>
+
+        <h2
+          style={{
+            fontFamily: FONT_DISPLAY,
+            fontSize: 17,
+            fontWeight: 800,
+            color: COLORS.textPrimary,
+            margin: '0 0 14px',
+          }}
+        >
+          Search a team
+        </h2>
+
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="e.g. Arsenal"
+            style={{
+              flex: 1,
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: `1px solid ${COLORS.border}`,
+              background: COLORS.surfaceAlt,
+              color: COLORS.textPrimary,
+              fontFamily: FONT_BODY,
+              fontSize: 13,
+              boxSizing: 'border-box',
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: 'none',
+              background: COLORS.emerald,
+              color: '#ffffff',
+              fontFamily: FONT_BODY,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Search
+          </button>
+        </form>
+
+        {searchedTeam && (
+          <>
+            {/* External search — opens a real web search in a new tab. This
+                app has no backend to safely hold a live news-API key, so
+                this is the honest, zero-cost way to surface outside
+                information rather than faking it inline. */}
+            <a
+              href={webSearchUrlForTeam(searchedTeam)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'block',
+                fontSize: 12,
+                color: COLORS.emerald,
+                fontWeight: 700,
+                marginBottom: 16,
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              Search the web for {searchedTeam} news →
+            </a>
+
+            <div
+              style={{
+                fontFamily: FONT_BODY,
+                fontSize: 11,
+                fontWeight: 700,
+                color: COLORS.textMuted,
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+                marginBottom: 8,
+              }}
+            >
+              Match history in our data
+            </div>
+
+            {loading && (
+              <div style={{ fontSize: 12.5, color: COLORS.textMuted }}>Searching…</div>
+            )}
+
+            {!loading && !result && (
+              <div style={{ fontSize: 12.5, color: COLORS.textMuted, lineHeight: 1.5 }}>
+                No history found for "{searchedTeam}" yet — we only have data for teams that have
+                appeared in a generated ticket so far. Try the web search link above for outside
+                information.
+              </div>
+            )}
+
+            {!loading && result && (
+              <div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    marginBottom: 12,
+                    fontSize: 12,
+                    color: COLORS.textMuted,
+                  }}
+                >
+                  <span>
+                    <strong style={{ color: COLORS.emerald }}>{result.wins}W</strong>
+                  </span>
+                  <span>
+                    <strong style={{ color: COLORS.amber }}>{result.draws}D</strong>
+                  </span>
+                  <span>
+                    <strong style={{ color: COLORS.red }}>{result.losses}L</strong>
+                  </span>
+                  <span>— last {result.matchesFound} in our data</span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {result.recentResults.map((r, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '8px 0',
+                        borderBottom: `1px solid ${COLORS.border}`,
+                      }}
+                    >
+                      <ResultBadge result={r.result} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, color: COLORS.textPrimary, fontWeight: 600 }}>
+                          {r.venue === 'home' ? 'vs' : '@'} {r.opponent}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: COLORS.textMuted }}>
+                          {r.league} · {formatKickoff(r.kickoff)}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: COLORS.textPrimary, flexShrink: 0 }}>
+                        {r.goalsFor}-{r.goalsAgainst}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TicketCard({
   ticket,
   unlocked,
   trialActive,
+  isSignedIn,
   onWatchAd,
   onSubscribe,
   onPayPerTicket,
@@ -483,6 +756,7 @@ function TicketCard({
   ticket: Ticket;
   unlocked: boolean;
   trialActive: boolean;
+  isSignedIn: boolean;
   onWatchAd: (ticketId: string) => void;
   onSubscribe: () => void;
   onPayPerTicket: (ticketId: string) => void;
@@ -490,7 +764,10 @@ function TicketCard({
 }) {
   const [open, setOpen] = useState(false);
   const overallStatus = getTicketStatus(ticket);
-  const isLocked = !ticket.isFree && !trialActive && !unlocked;
+  // Weekly Titan is free forever once someone signs up — the signup
+  // incentive, separate from the time-limited trial.
+  const isWeeklyTitanUnlockedForever = ticket.tier === 'weekly_titan' && isSignedIn;
+  const isLocked = !ticket.isFree && !isWeeklyTitanUnlockedForever && !trialActive && !unlocked;
 
   const borderColor =
     overallStatus === 'green' ? COLORS.emerald : overallStatus === 'red' ? COLORS.red : COLORS.amber;
@@ -692,19 +969,30 @@ function TicketCard({
 function LoginModal({ onSent, onClose }: { onSent: (email: string) => void; onClose: () => void }) {
   const [email, setEmail] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
     if (!agreed || !email) return;
     setStatus('sending');
-    const { error } = await supabase.auth.signInWithOtp({ email });
+    // marketing_opt_in is stored in the user's auth metadata — set here at
+    // signup time so there's a real, explicit opt-in on record before
+    // anyone's added to a marketing list, rather than assuming consent.
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { data: { marketing_opt_in: marketingOptIn } },
+    });
     if (error) {
       setStatus('error');
       return;
     }
     setStatus('sent');
     onSent(email);
+  }
+
+  async function handleOAuth(provider: 'google' | 'facebook') {
+    await supabase.auth.signInWithOAuth({ provider });
   }
 
   return (
@@ -757,6 +1045,52 @@ function LoginModal({ onSent, onClose }: { onSent: (email: string) => void; onCl
           <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14, paddingRight: 20, lineHeight: 1.5 }}>
             Sign in with a magic link to sync your trial and unlocks across devices.
           </div>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button
+              type="button"
+              onClick={() => handleOAuth('google')}
+              style={{
+                flex: 1,
+                padding: '9px 0',
+                borderRadius: 8,
+                border: `1px solid ${COLORS.border}`,
+                background: '#ffffff',
+                color: COLORS.textPrimary,
+                fontFamily: FONT_BODY,
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              Google
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOAuth('facebook')}
+              style={{
+                flex: 1,
+                padding: '9px 0',
+                borderRadius: 8,
+                border: `1px solid ${COLORS.border}`,
+                background: '#ffffff',
+                color: COLORS.textPrimary,
+                fontFamily: FONT_BODY,
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              Facebook
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0 14px' }}>
+            <div style={{ flex: 1, height: 1, background: COLORS.border }} />
+            <span style={{ fontSize: 10.5, color: COLORS.textMuted }}>or use email</span>
+            <div style={{ flex: 1, height: 1, background: COLORS.border }} />
+          </div>
+
           <input
             type="email"
             required
@@ -800,6 +1134,30 @@ function LoginModal({ onSent, onClose }: { onSent: (email: string) => void; onCl
               style={{ marginTop: 2 }}
             />
             I have read and accept the Hold-Harmless Indemnification Agreement.
+          </label>
+
+          {/* Marketing consent — deliberately a separate, optional checkbox,
+              unchecked by default. Bundling this with the required legal
+              agreement above would make consent meaningless. */}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 8,
+              fontSize: 12,
+              color: COLORS.textMuted,
+              marginBottom: 14,
+              cursor: 'pointer',
+              lineHeight: 1.4,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={marketingOptIn}
+              onChange={(e) => setMarketingOptIn(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            Send me occasional emails about new ticket drops and offers (optional).
           </label>
 
           <button
@@ -861,55 +1219,6 @@ function getDailyRefreshInfo(): { timeLabel: string; hasRefreshedToday: boolean 
   return { timeLabel, hasRefreshedToday: now.getTime() >= refreshUTC.getTime() };
 }
 
-/**
- * Infers a broad region from the visitor's own device timezone —
- * IANA zone names are structured as "Continent/City" (e.g. "Africa/Lagos",
- * "Europe/London", "Asia/Manila"), which the browser already knows with
- * zero permission prompts and zero API calls. "America/..." is split into
- * North vs South via a city lookup, since IANA doesn't separate them by
- * prefix alone.
- *
- * This is detection infrastructure for regional ticket filtering — tickets
- * aren't filtered by region yet (that needs real per-region league data in
- * the pipeline first), but the region is already surfaced in the UI so the
- * groundwork is visible and testable.
- */
-export type Region = 'Africa' | 'Europe' | 'Asia' | 'North America' | 'South America' | 'Oceania' | 'Unknown';
-
-const SOUTH_AMERICA_CITIES = new Set([
-  'Sao_Paulo', 'Argentina', 'Buenos_Aires', 'Bogota', 'Lima', 'Santiago',
-  'Caracas', 'La_Paz', 'Montevideo', 'Asuncion', 'Guyana', 'Manaus', 'Recife',
-]);
-
-function detectRegion(): Region {
-  let timeZone: string;
-  try {
-    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; // e.g. "Africa/Lagos"
-  } catch {
-    return 'Unknown';
-  }
-
-  const [continent, cityOrArea] = timeZone.split('/');
-
-  switch (continent) {
-    case 'Africa':
-      return 'Africa';
-    case 'Europe':
-      return 'Europe';
-    case 'Asia':
-      return 'Asia';
-    case 'Australia':
-    case 'Pacific':
-      return 'Oceania';
-    case 'America': {
-      const isSouth = [...SOUTH_AMERICA_CITIES].some((c) => cityOrArea?.includes(c));
-      return isSouth ? 'South America' : 'North America';
-    }
-    default:
-      return 'Unknown';
-  }
-}
-
 function Hero({
   bronzeCount,
   goldCount,
@@ -922,7 +1231,6 @@ function Hero({
   onViewHistory: () => void;
 }) {
   const { timeLabel, hasRefreshedToday } = getDailyRefreshInfo();
-  const region = detectRegion();
 
   return (
     <div
@@ -1006,19 +1314,6 @@ function Hero({
           ? `Today's tickets are live · next refresh ${timeLabel} tomorrow`
           : `New tickets drop today at ${timeLabel}`}
       </div>
-
-      {region !== 'Unknown' && (
-        <div
-          style={{
-            fontFamily: FONT_BODY,
-            fontSize: 10.5,
-            color: 'rgba(255,255,255,0.7)',
-            marginBottom: 16,
-          }}
-        >
-          Browsing from {region} · regional ticket picks coming soon
-        </div>
-      )}
 
       <div
         style={{
@@ -1197,6 +1492,481 @@ function PerformanceHistory({ history }: { history: DayPerformance[] }) {
   );
 }
 
+function TicketArchiveModal({ access, onClose }: { access: ArchiveAccess; onClose: () => void }) {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = dateKey(yesterday);
+
+  const minDateStr = useMemo(() => {
+    if (access.level !== 'subscriber') return undefined;
+    const oldest = new Date();
+    oldest.setDate(oldest.getDate() - access.maxDaysBack);
+    return dateKey(oldest);
+  }, [access]);
+
+  const [selectedDateStr, setSelectedDateStr] = useState(yesterdayStr);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [archiveSelectedMatch, setArchiveSelectedMatch] = useState<Match | null>(null);
+
+  async function loadDate(value: string) {
+    setLoading(true);
+    setLoaded(false);
+    // Anchor at noon to avoid a date-input string landing on the wrong
+    // calendar day when parsed near a timezone boundary.
+    const picked = new Date(`${value}T12:00:00`);
+    const result = await fetchTickets(picked);
+    setTickets(result);
+    setLoading(false);
+    setLoaded(true);
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 40,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        padding: 20,
+        paddingTop: '6vh',
+        overflowY: 'auto',
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.surface,
+          borderRadius: 14,
+          padding: 20,
+          width: '100%',
+          maxWidth: 480,
+          boxShadow: '0 20px 60px -20px rgba(0,0,0,0.35)',
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            background: 'none',
+            border: 'none',
+            color: COLORS.textMuted,
+            fontSize: 16,
+            cursor: 'pointer',
+          }}
+        >
+          ✕
+        </button>
+
+        <h2
+          style={{
+            fontFamily: FONT_DISPLAY,
+            fontSize: 17,
+            fontWeight: 800,
+            color: COLORS.textPrimary,
+            margin: '0 0 4px',
+          }}
+        >
+          Ticket archive
+        </h2>
+        <p style={{ fontSize: 11.5, color: COLORS.textMuted, margin: '0 0 14px' }}>
+          {access.level === 'admin'
+            ? 'Admin access — any past day, unrestricted.'
+            : `Subscriber access — up to the last ${access.level === 'subscriber' ? access.maxDaysBack : 5} days.`}
+        </p>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <input
+            type="date"
+            value={selectedDateStr}
+            max={yesterdayStr}
+            min={minDateStr}
+            onChange={(e) => setSelectedDateStr(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '9px 10px',
+              borderRadius: 8,
+              border: `1px solid ${COLORS.border}`,
+              background: COLORS.surfaceAlt,
+              color: COLORS.textPrimary,
+              fontFamily: FONT_BODY,
+              fontSize: 13,
+            }}
+          />
+          <button
+            onClick={() => loadDate(selectedDateStr)}
+            disabled={loading}
+            style={{
+              padding: '9px 16px',
+              borderRadius: 8,
+              border: 'none',
+              background: COLORS.emerald,
+              color: '#ffffff',
+              fontFamily: FONT_BODY,
+              fontWeight: 700,
+              fontSize: 12.5,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {loading ? '...' : 'Load'}
+          </button>
+        </div>
+
+        {loading && <div style={{ fontSize: 12, color: COLORS.textMuted }}>Loading {selectedDateStr}...</div>}
+
+        {loaded && !loading && tickets.length === 0 && (
+          <div style={{ fontSize: 12, color: COLORS.textMuted }}>No tickets found for {selectedDateStr}.</div>
+        )}
+
+        {!loading &&
+          tickets.map((t) => (
+            <TicketCard
+              key={t.id}
+              ticket={t}
+              trialActive={true}
+              unlocked={true}
+              isSignedIn={true}
+              onWatchAd={() => {}}
+              onSubscribe={() => {}}
+              onPayPerTicket={() => {}}
+              onSelectMatch={setArchiveSelectedMatch}
+            />
+          ))}
+
+        {archiveSelectedMatch && (
+          <MatchAnalysisModal match={archiveSelectedMatch} onClose={() => setArchiveSelectedMatch(null)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PricingModal({
+  onClose,
+  userId,
+  userEmail,
+}: {
+  onClose: () => void;
+  userId: string | null;
+  userEmail: string | null;
+}) {
+  const plans = [
+    { id: 'weekly' as const, label: 'Weekly', price: '$2.49', period: '/week' },
+    { id: 'monthly' as const, label: 'Monthly', price: '$7.99', period: '/month', highlight: true },
+    { id: 'yearly' as const, label: 'Yearly', price: '$67', period: '/year', badge: 'Best value' },
+  ];
+
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function startCheckout(planId: 'weekly' | 'monthly' | 'yearly', method: 'card' | 'mobile_money') {
+    if (!userId || !userEmail) {
+      setError('Please sign in first, then come back to subscribe.');
+      return;
+    }
+    setError(null);
+    setLoadingKey(`${planId}-${method}`);
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: planId, method, userId, email: userEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || 'Could not start checkout');
+      }
+      window.location.href = data.url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      setLoadingKey(null);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        zIndex: 46,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.surface,
+          borderRadius: 14,
+          padding: 22,
+          width: '100%',
+          maxWidth: 420,
+          maxHeight: '85vh',
+          overflowY: 'auto',
+          boxShadow: '0 20px 60px -20px rgba(0,0,0,0.35)',
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 12,
+            background: 'none',
+            border: 'none',
+            color: COLORS.textMuted,
+            fontSize: 16,
+            cursor: 'pointer',
+          }}
+        >
+          ✕
+        </button>
+
+        <h2
+          style={{
+            fontFamily: FONT_DISPLAY,
+            fontSize: 18,
+            fontWeight: 800,
+            color: COLORS.textPrimary,
+            margin: '0 0 4px',
+          }}
+        >
+          Choose your plan
+        </h2>
+        <p style={{ fontSize: 11.5, color: COLORS.textMuted, margin: '0 0 16px' }}>
+          Unlock every tier, every day — pay easily with mobile money.
+        </p>
+
+        {!userId && (
+          <div
+            style={{
+              fontSize: 11.5,
+              color: COLORS.textMuted,
+              background: COLORS.surfaceAlt,
+              borderRadius: 8,
+              padding: '8px 10px',
+              marginBottom: 14,
+            }}
+          >
+            Sign in first to subscribe — close this, tap Sign in, then come back.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {plans.map((plan) => (
+            <div
+              key={plan.label}
+              style={{
+                border: `1.5px solid ${plan.highlight ? COLORS.emerald : COLORS.border}`,
+                borderRadius: 10,
+                padding: '12px 14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.textPrimary }}>
+                    {plan.label}
+                    {plan.badge && (
+                      <span
+                        style={{
+                          marginLeft: 6,
+                          fontSize: 9.5,
+                          fontWeight: 700,
+                          color: COLORS.emerald,
+                          background: 'rgba(11,138,79,0.1)',
+                          borderRadius: 999,
+                          padding: '2px 6px',
+                        }}
+                      >
+                        {plan.badge}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>Billed {plan.label.toLowerCase()}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 17, fontWeight: 800, color: COLORS.emerald }}>
+                    {plan.price}
+                  </div>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>{plan.period}</div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => startCheckout(plan.id, 'mobile_money')}
+                disabled={loadingKey !== null}
+                style={{
+                  width: '100%',
+                  padding: '10px 0',
+                  borderRadius: 7,
+                  border: 'none',
+                  background: COLORS.emerald,
+                  color: '#ffffff',
+                  fontFamily: FONT_BODY,
+                  fontWeight: 700,
+                  fontSize: 12.5,
+                  cursor: loadingKey ? 'not-allowed' : 'pointer',
+                  marginBottom: 8,
+                }}
+              >
+                {loadingKey === `${plan.id}-mobile_money` ? '...' : '📱 Pay with Mobile Money'}
+              </button>
+              <button
+                onClick={() => startCheckout(plan.id, 'card')}
+                disabled={loadingKey !== null}
+                style={{
+                  width: '100%',
+                  padding: '4px 0',
+                  background: 'none',
+                  border: 'none',
+                  color: COLORS.textMuted,
+                  fontFamily: FONT_BODY,
+                  fontWeight: 600,
+                  fontSize: 11,
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 3,
+                  cursor: loadingKey ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {loadingKey === `${plan.id}-card` ? '...' : 'Or pay by card instead'}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div style={{ marginTop: 12, fontSize: 11.5, color: COLORS.red, textAlign: 'center' }}>{error}</div>
+        )}
+
+        <div
+          style={{
+            marginTop: 16,
+            fontSize: 10.5,
+            color: COLORS.textMuted,
+            textAlign: 'center',
+            lineHeight: 1.5,
+          }}
+        >
+          Mobile money via Flutterwave (M-Pesa, MTN MoMo, Airtel Money, and more) · card payments also available via Stripe.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const REMINDER_DISMISS_KEY = 'odd_saint_reminder_dismissed_date';
+
+function wasDismissedToday(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(REMINDER_DISMISS_KEY) === new Date().toDateString();
+  } catch {
+    return false;
+  }
+}
+
+function markDismissedToday(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(REMINDER_DISMISS_KEY, new Date().toDateString());
+  } catch {
+    // localStorage unavailable — dismissal just won't persist, not worth failing over.
+  }
+}
+
+function TrialReminderBanner({
+  userEmail,
+  daysLeft,
+  signedUpDaysElapsed,
+  onSignUpClick,
+  onUpgradeClick,
+}: {
+  userEmail: string | null;
+  daysLeft: number;
+  signedUpDaysElapsed: number;
+  onSignUpClick: () => void;
+  onUpgradeClick: () => void;
+}) {
+  const [dismissed, setDismissed] = useState(wasDismissedToday);
+  if (dismissed) return null;
+
+  function dismiss() {
+    markDismissedToday();
+    setDismissed(true);
+  }
+
+  // Anonymous visitor, still within the 14-day window → nudge to sign up for +30 more days.
+  const showSignUpNudge = !userEmail && daysLeft > 0;
+  // Signed-up user, day 15+ of their 30-day window → nudge to upgrade.
+  const showUpgradeNudge = !!userEmail && signedUpDaysElapsed >= 15 && daysLeft > 0;
+
+  if (!showSignUpNudge && !showUpgradeNudge) return null;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+        background: COLORS.surfaceAlt,
+        border: `1px solid ${COLORS.hairline}`,
+        borderRadius: 10,
+        padding: '10px 12px',
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ fontSize: 11.5, color: COLORS.textPrimary, lineHeight: 1.4 }}>
+        {showSignUpNudge
+          ? `Sign up free and get ${SIGNED_UP_TRIAL_DAYS} more days — ${daysLeft} day${daysLeft === 1 ? '' : 's'} left on your trial.`
+          : `Loving Odd Saint? Plans start at $2.49/week — ${daysLeft} free day${daysLeft === 1 ? '' : 's'} left.`}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <button
+          onClick={showSignUpNudge ? onSignUpClick : onUpgradeClick}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 7,
+            border: 'none',
+            background: COLORS.emerald,
+            color: '#ffffff',
+            fontFamily: FONT_BODY,
+            fontWeight: 700,
+            fontSize: 11,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {showSignUpNudge ? 'Sign up' : 'See plans'}
+        </button>
+        <button
+          onClick={dismiss}
+          aria-label="Dismiss"
+          style={{ background: 'none', border: 'none', color: COLORS.textMuted, cursor: 'pointer', fontSize: 13 }}
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 function Footer() {
   const [showLegal, setShowLegal] = useState(false);
 
@@ -1238,10 +2008,15 @@ function Footer() {
 
 export default function Page() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [registeredAt, setRegisteredAt] = useState<string | null>(null);
   const [anonTrialStart, setAnonTrialStart] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
+  const [showTeamSearch, setShowTeamSearch] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
+  const [archiveAccess, setArchiveAccess] = useState<ArchiveAccess>({ level: 'none' });
+  const [showPricing, setShowPricing] = useState(false);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [history, setHistory] = useState<DayPerformance[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -1263,14 +2038,18 @@ export default function Page() {
       if (!mounted) return;
       const user = data.session?.user ?? null;
       setUserEmail(user?.email ?? null);
+      setUserId(user?.id ?? null);
       setRegisteredAt(user?.created_at ?? null);
       setLoading(false);
+      getArchiveAccess(user?.id ?? null).then((a) => mounted && setArchiveAccess(a));
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       const user = session?.user ?? null;
       setUserEmail(user?.email ?? null);
+      setUserId(user?.id ?? null);
       setRegisteredAt(user?.created_at ?? null);
+      getArchiveAccess(user?.id ?? null).then((a) => mounted && setArchiveAccess(a));
     });
 
     return () => {
@@ -1294,11 +2073,30 @@ export default function Page() {
       });
   }, []);
 
-  // Logged-in users get their trial tied to their account (registeredAt);
-  // everyone else gets the anonymous, device-local trial start.
-  const effectiveTrialStart = userEmail ? registeredAt : anonTrialStart;
-  const trialActive = useMemo(() => isWithinFreeTrial(effectiveTrialStart), [effectiveTrialStart]);
-  const daysLeft = useMemo(() => getTrialDaysRemaining(effectiveTrialStart), [effectiveTrialStart]);
+  // Signed-up users get a fresh 30-day window from their account creation
+  // date; anonymous visitors get 14 days from first visit. These are
+  // deliberately different lengths — signing up is what earns the longer
+  // window (see ANONYMOUS_TRIAL_DAYS / SIGNED_UP_TRIAL_DAYS).
+  const trialActive = useMemo(
+    () =>
+      userEmail
+        ? isWithinFreeTrial(registeredAt, SIGNED_UP_TRIAL_DAYS)
+        : isWithinFreeTrial(anonTrialStart, ANONYMOUS_TRIAL_DAYS),
+    [userEmail, registeredAt, anonTrialStart]
+  );
+  const daysLeft = useMemo(
+    () =>
+      userEmail
+        ? getTrialDaysRemaining(registeredAt, SIGNED_UP_TRIAL_DAYS)
+        : getTrialDaysRemaining(anonTrialStart, ANONYMOUS_TRIAL_DAYS),
+    [userEmail, registeredAt, anonTrialStart]
+  );
+  // How many days into the signed-up trial someone is — used to trigger
+  // the day-15+ upgrade-to-paid reminder.
+  const signedUpDaysElapsed = useMemo(() => {
+    if (!userEmail || !registeredAt) return 0;
+    return SIGNED_UP_TRIAL_DAYS - getTrialDaysRemaining(registeredAt, SIGNED_UP_TRIAL_DAYS);
+  }, [userEmail, registeredAt]);
 
   function handleWatchAd(ticketId: string) {
     setAdTicketId(ticketId);
@@ -1320,9 +2118,7 @@ export default function Page() {
   }
 
   function handleSubscribe() {
-    // Wire this up to your subscription checkout flow.
-    // eslint-disable-next-line no-alert
-    alert('Redirect to subscription checkout goes here.');
+    setShowPricing(true);
   }
 
   if (loading) {
@@ -1374,41 +2170,79 @@ export default function Page() {
         }}
       >
         <Logo light />
-        {userEmail ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
-            onClick={() => supabase.auth.signOut()}
+            onClick={() => setShowTeamSearch(true)}
+            aria-label="Search a team"
             style={{
               background: 'rgba(255,255,255,0.12)',
               border: '1px solid rgba(255,255,255,0.4)',
               borderRadius: 7,
-              padding: '6px 12px',
+              padding: '6px 10px',
               color: '#ffffff',
               fontFamily: FONT_BODY,
-              fontSize: 11.5,
-              fontWeight: 600,
+              fontSize: 13,
               cursor: 'pointer',
+              lineHeight: 1,
             }}
           >
-            Sign out
+            🔍
           </button>
-        ) : (
-          <button
-            onClick={() => setShowLoginModal(true)}
-            style={{
-              background: '#ffffff',
-              border: 'none',
-              borderRadius: 7,
-              padding: '6px 12px',
-              color: COLORS.emerald,
-              fontFamily: FONT_BODY,
-              fontSize: 11.5,
-              cursor: 'pointer',
-              fontWeight: 700,
-            }}
-          >
-            Sign in
-          </button>
-        )}
+          {archiveAccess.level !== 'none' && (
+            <button
+              onClick={() => setShowArchive(true)}
+              aria-label="Ticket archive"
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.4)',
+                borderRadius: 7,
+                padding: '6px 10px',
+                color: '#ffffff',
+                fontFamily: FONT_BODY,
+                fontSize: 13,
+                cursor: 'pointer',
+                lineHeight: 1,
+              }}
+            >
+              🕐
+            </button>
+          )}
+          {userEmail ? (
+            <button
+              onClick={() => supabase.auth.signOut()}
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.4)',
+                borderRadius: 7,
+                padding: '6px 12px',
+                color: '#ffffff',
+                fontFamily: FONT_BODY,
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Sign out
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowLoginModal(true)}
+              style={{
+                background: '#ffffff',
+                border: 'none',
+                borderRadius: 7,
+                padding: '6px 12px',
+                color: COLORS.emerald,
+                fontFamily: FONT_BODY,
+                fontSize: 11.5,
+                cursor: 'pointer',
+                fontWeight: 700,
+              }}
+            >
+              Sign in
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '16px' }}>
@@ -1437,9 +2271,19 @@ export default function Page() {
           }}
         >
           {trialActive
-            ? `Free trial active — ${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining. Every ticket is unlocked, no account needed.`
+            ? userEmail
+              ? `Free trial active — ${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining. Weekly Titan stays free forever now that you're signed in.`
+              : `Free trial active — ${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining. Every ticket is unlocked, no account needed.`
             : 'Your free trial has ended. The Mega Day Ticket stays free forever — unlock premium tiers with an ad, a micro-fee, or a subscription.'}
         </div>
+
+        <TrialReminderBanner
+          userEmail={userEmail}
+          daysLeft={daysLeft}
+          signedUpDaysElapsed={signedUpDaysElapsed}
+          onSignUpClick={() => setShowLoginModal(true)}
+          onUpgradeClick={() => setShowPricing(true)}
+        />
 
         {/* Ticket feed with in-feed ad injection */}
         {feedItems.map((item, idx) =>
@@ -1453,6 +2297,7 @@ export default function Page() {
               ticket={item.ticket}
               trialActive={trialActive}
               unlocked={!!unlocks[item.ticket.id]}
+              isSignedIn={!!userEmail}
               onWatchAd={handleWatchAd}
               onSubscribe={handleSubscribe}
               onPayPerTicket={handlePayPerTicket}
@@ -1487,6 +2332,20 @@ export default function Page() {
       {/* Tap-to-analyze modal — reads only data already in memory, no extra API calls */}
       {selectedMatch && (
         <MatchAnalysisModal match={selectedMatch} onClose={() => setSelectedMatch(null)} />
+      )}
+
+      {/* Team history search — queries the team_match_history view directly */}
+      {showTeamSearch && <TeamSearchModal onClose={() => setShowTeamSearch(false)} />}
+
+      {/* Ticket archive — trigger only renders for admin/subscriber, but the
+          real security boundary is Supabase RLS on the admins/subscribers
+          tables, not this UI gate. */}
+      {showArchive && archiveAccess.level !== 'none' && (
+        <TicketArchiveModal access={archiveAccess} onClose={() => setShowArchive(false)} />
+      )}
+
+      {showPricing && (
+        <PricingModal onClose={() => setShowPricing(false)} userId={userId} userEmail={userEmail} />
       )}
     </div>
   );
