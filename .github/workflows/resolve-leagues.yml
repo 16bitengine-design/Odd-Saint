@@ -1,1 +1,41 @@
+name: Odd Saint — Resolve League IDs
 
+# Manual trigger ONLY — no schedule. This calls API-Football's own
+# /leagues endpoint (~1 request per country configured in
+# scripts/resolve-leagues.mjs) to get verified, current league IDs rather
+# than relying on hardcoded guesses. Run this occasionally (e.g. once when
+# first setting up regional coverage, or if you add/remove countries) —
+# not on every push, and never automatically.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Resolve league IDs from API-Football
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: node scripts/resolve-leagues.mjs
+
+      - name: Commit updated league list
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/lib/leagues.json
+          git diff --staged --quiet || git commit -m "chore: refresh resolved league IDs"
+          git push
