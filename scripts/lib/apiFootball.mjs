@@ -101,3 +101,8 @@ export async function getFixturesByIds(ids) {
   if (ids.length === 0) return [];
   return apiFootballGet('/fixtures', { ids: ids.join('-') });
 }
+
+/** All leagues/cups API-Football has for a given country name. */
+export async function getLeaguesByCountry(country) {
+  return apiFootballGet('/leagues', { country });
+}
