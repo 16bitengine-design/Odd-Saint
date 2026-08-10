@@ -15,14 +15,22 @@
 import { getFixturesForDate, getOddsForFixture } from './lib/apiFootball.mjs';
 import { getSupabaseAdmin } from './lib/supabaseAdmin.mjs';
 import { collectViableOutcomes } from './lib/markets.mjs';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LEAGUES_JSON_PATH = join(__dirname, 'lib', 'leagues.json');
 
 // --- Config -----------------------------------------------------------------
 
-// Top-flight league IDs (API-Football numeric IDs). Extend this list as you
-// see fit — more leagues = a bigger, more diverse fixture pool, at the cost
-// of more processing (not more API calls; one /fixtures?date= call already
-// returns every league for that date, filtered here).
-const LEAGUE_ALLOWLIST = new Set([
+// Small built-in default — used until scripts/resolve-leagues.mjs has been
+// run at least once (via the manually-triggered "Resolve League IDs"
+// workflow) to generate the full, verified league list at
+// scripts/lib/leagues.json. One /fixtures?date= call already returns every
+// league for that date regardless of allowlist size — filtering here
+// doesn't cost extra API requests either way.
+const DEFAULT_LEAGUE_ALLOWLIST = new Set([
   39,  // Premier League
   140, // La Liga
   135, // Serie A
@@ -34,6 +42,26 @@ const LEAGUE_ALLOWLIST = new Set([
   94,  // Primeira Liga
   253, // MLS
 ]);
+
+function loadLeagueAllowlist() {
+  try {
+    const raw = readFileSync(LEAGUES_JSON_PATH, 'utf8');
+    const leagues = JSON.parse(raw);
+    if (Array.isArray(leagues) && leagues.length > 0) {
+      console.log(`Loaded ${leagues.length} resolved league(s) from leagues.json.`);
+      return new Set(leagues.map((l) => l.id));
+    }
+  } catch {
+    // leagues.json doesn't exist yet (or is invalid) — fall back below.
+  }
+  console.log(
+    'leagues.json not found — using the small built-in default league set. ' +
+      'Run the "Resolve League IDs" workflow for full regional coverage.'
+  );
+  return DEFAULT_LEAGUE_ALLOWLIST;
+}
+
+const LEAGUE_ALLOWLIST = loadLeagueAllowlist();
 
 // Caps how many /odds requests we make per pool (daily, then weekly — so a
 // full run uses at most ~2x this many, plus a couple of /fixtures calls).
@@ -155,15 +183,27 @@ async function fetchPricedFixtures(dates, maxOddsLookups) {
 // force in a pick the market itself doesn't consider a clear favorite.
 const MIN_CONFIDENCE = 62;
 
+// Result-based markets to steer away from when priced this short — an
+// extremely tight price on any of these can still be upset (a draw, a cup
+// shock, a keeper's bad day). Double Chance in particular is the market
+// that actually reaches odds this low (as tight as 1.1) — Home/Away Win
+// never goes below 1.3 per the market catalog's own bounds.
+const RESULT_BASED_MARKETS = new Set([
+  'Home Win', 'Away Win', 'Double Chance 1X', 'Double Chance X2', 'Double Chance 12',
+]);
+const WIN_MARKET_MIN_ODDS = 1.3;
+
 /**
  * SELECTION STRATEGY (odds → market pick):
  * Checks every market in the shared catalog (Match Winner, Goals
  * Over/Under, Both Teams Score, Double Chance) against this fixture's
  * bookmaker odds, and takes the SAFEST viable outcome — i.e. whichever
  * has the lowest odds / highest implied confidence — rather than picking
- * randomly among them. Skips the fixture entirely if nothing clears
- * MIN_CONFIDENCE, rather than forcing a low-quality pick just to fill a
- * ticket.
+ * randomly among them. If that safest outcome is a result-based market
+ * (see RESULT_BASED_MARKETS) priced below WIN_MARKET_MIN_ODDS, an Over
+ * Goals market is substituted instead when one's available. Skips the
+ * fixture entirely if nothing clears MIN_CONFIDENCE, rather than forcing a
+ * low-quality pick just to fill a ticket.
  */
 function pickMarketFromOdds(oddsResponse) {
   const bookmaker = oddsResponse?.[0]?.bookmakers?.[0];
@@ -172,7 +212,25 @@ function pickMarketFromOdds(oddsResponse) {
   const viable = collectViableOutcomes(bookmaker.bets);
   if (viable.length === 0) return null;
 
-  const chosen = viable.sort((a, b) => a.odds - b.odds)[0]; // lowest odds = safest
+  const sorted = [...viable].sort((a, b) => a.odds - b.odds);
+  let chosen = sorted[0]; // lowest odds = safest, by default
+
+  const isResultMarket = RESULT_BASED_MARKETS.has(chosen.market);
+  if (isResultMarket && chosen.odds < WIN_MARKET_MIN_ODDS) {
+    const goalsAlt = sorted.find((o) => o.market === 'Over 1.5 Goals' || o.market === 'Over 2.5 Goals');
+    if (goalsAlt) {
+      chosen = goalsAlt;
+    } else {
+      // No Goals-market alternative for this fixture — fall back to the
+      // next-safest non-result-based option if one exists (e.g. BTTS),
+      // rather than the too-short result-based price.
+      const nonResult = sorted.find((o) => !RESULT_BASED_MARKETS.has(o.market));
+      if (nonResult) chosen = nonResult;
+      // If truly nothing else is viable, the short price is accepted
+      // rather than dropping the fixture entirely.
+    }
+  }
+
   const confidence = impliedConfidence(chosen.odds);
   if (confidence < MIN_CONFIDENCE) return null; // too uncertain even at its safest — skip this fixture
 
