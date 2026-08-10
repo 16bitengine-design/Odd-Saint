@@ -38,6 +38,8 @@ export interface Match {
   kickoff: string; // ISO date string
   status: MatchStatus;
   confidence: number; // AI Data Confidence Index, 0-100 (not a guarantee)
+  finalHomeScore?: number; // set once the match has concluded
+  finalAwayScore?: number;
 }
 
 export interface Ticket {
@@ -205,6 +207,46 @@ function pickTeams(rand: () => number): { home: string; away: string; league: st
 // same rule as the real pipeline (scripts/generate-tickets.mjs).
 const SMALL_TICKET_MAX_ODDS = 1.77;
 
+/**
+ * Generates a plausible final score consistent with a market and whether
+ * the pick won or lost — the inverse of scripts/lib/markets.mjs's
+ * settleMarket, which judges a score against a market. Only called once a
+ * match has actually "been played" (see hasBeenPlayed below), so mock data
+ * never shows a score before its status would allow one.
+ */
+function generateScoreForOutcome(
+  market: string,
+  won: boolean,
+  rand: () => number
+): { home: number; away: number } {
+  const lowGoal = () => Math.floor(rand() * 2); // 0-1
+  const highGoal = () => 2 + Math.floor(rand() * 3); // 2-4
+
+  switch (market) {
+    case 'Home Win':
+      return won ? { home: highGoal(), away: lowGoal() } : { home: lowGoal(), away: lowGoal() + (rand() < 0.5 ? 0 : 1) };
+    case 'Away Win':
+      return won ? { home: lowGoal(), away: highGoal() } : { home: lowGoal() + (rand() < 0.5 ? 0 : 1), away: lowGoal() };
+    case 'Over 1.5 Goals':
+      return won ? { home: 1 + Math.floor(rand() * 2), away: 1 + Math.floor(rand() * 2) } : { home: 0, away: rand() < 0.5 ? 0 : 1 };
+    case 'Under 1.5 Goals':
+      return won ? { home: 0, away: rand() < 0.5 ? 0 : 1 } : { home: 1 + Math.floor(rand() * 2), away: 1 + Math.floor(rand() * 2) };
+    case 'Over 2.5 Goals':
+      return won ? { home: highGoal(), away: 1 + Math.floor(rand() * 2) } : { home: 1, away: 1 };
+    case 'Under 2.5 Goals':
+      return won ? { home: 1, away: 1 } : { home: highGoal(), away: 1 + Math.floor(rand() * 2) };
+    case 'Over 3.5 Goals':
+      return won ? { home: highGoal(), away: highGoal() } : { home: 1, away: 1 };
+    case 'BTTS':
+    case 'BTTS - Yes':
+      return won ? { home: 1 + Math.floor(rand() * 2), away: 1 + Math.floor(rand() * 2) } : { home: 0, away: 1 + Math.floor(rand() * 2) };
+    case 'BTTS - No':
+      return won ? { home: 0, away: 1 + Math.floor(rand() * 2) } : { home: 1 + Math.floor(rand() * 2), away: 1 + Math.floor(rand() * 2) };
+    default:
+      return won ? { home: highGoal(), away: lowGoal() } : { home: lowGoal(), away: lowGoal() };
+  }
+}
+
 function buildMatch(
   rand: () => number,
   index: number,
@@ -225,6 +267,14 @@ function buildMatch(
   // "intended" outcome only applies once real time has caught up to it.
   const status: MatchStatus = hasBeenPlayed ? forcedStatus : 'pending';
 
+  let finalHomeScore: number | undefined;
+  let finalAwayScore: number | undefined;
+  if (status === 'green' || status === 'red') {
+    const score = generateScoreForOutcome(market, status === 'green', rand);
+    finalHomeScore = score.home;
+    finalAwayScore = score.away;
+  }
+
   return {
     id: `m-${seedOffset}-${index}`,
     league,
@@ -235,6 +285,8 @@ function buildMatch(
     kickoff: kickoff.toISOString(),
     status,
     confidence,
+    finalHomeScore,
+    finalAwayScore,
   };
 }
 
@@ -378,7 +430,7 @@ async function fetchRealTicketsForDate(date: Date): Promise<Ticket[] | null> {
       .from('tickets')
       .select(
         `id, tier, slip_label, match_count, odds_range, total_odds, is_free,
-         ticket_matches ( sort_order, fixtures ( id, league, home_team, away_team, kickoff, market, odds, confidence, result_status ) )`
+         ticket_matches ( sort_order, fixtures ( id, league, home_team, away_team, kickoff, market, odds, confidence, result_status, final_home_score, final_away_score ) )`
       )
       .eq('ticket_date', day);
 
@@ -419,6 +471,8 @@ async function fetchRealTicketsForDate(date: Date): Promise<Ticket[] | null> {
         kickoff: f.kickoff,
         status: f.result_status as MatchStatus,
         confidence: f.confidence,
+        finalHomeScore: f.final_home_score ?? undefined,
+        finalAwayScore: f.final_away_score ?? undefined,
       };
     });
 
@@ -468,18 +522,27 @@ export async function fetchTicketsByTier(tier: TicketTier, date: Date = new Date
 }
 
 /**
- * Trial helper: given a user's registration date (ISO string), returns
- * how many days remain in the 30-day free trial window (never negative).
+ * Trial length in days for anonymous (not signed in) visitors.
+ * Signing up grants a separate, fresh SIGNED_UP_TRIAL_DAYS window on top —
+ * up to ANONYMOUS_TRIAL_DAYS + SIGNED_UP_TRIAL_DAYS = 44 total free days if
+ * someone signs up on day 1 of browsing.
  */
-export function getTrialDaysRemaining(registeredAtISO: string | null): number {
-  if (!registeredAtISO) return 30;
-  const registeredAt = new Date(registeredAtISO).getTime();
-  const elapsedDays = Math.floor((Date.now() - registeredAt) / (1000 * 60 * 60 * 24));
-  return Math.max(0, 30 - elapsedDays);
+export const ANONYMOUS_TRIAL_DAYS = 14;
+export const SIGNED_UP_TRIAL_DAYS = 30;
+
+/**
+ * Trial helper: given a start date (ISO string) and the trial length in
+ * days for that context, returns how many days remain (never negative).
+ */
+export function getTrialDaysRemaining(startISO: string | null, totalDays: number): number {
+  if (!startISO) return totalDays;
+  const start = new Date(startISO).getTime();
+  const elapsedDays = Math.floor((Date.now() - start) / (1000 * 60 * 60 * 24));
+  return Math.max(0, totalDays - elapsedDays);
 }
 
-export function isWithinFreeTrial(registeredAtISO: string | null): boolean {
-  return getTrialDaysRemaining(registeredAtISO) > 0;
+export function isWithinFreeTrial(startISO: string | null, totalDays: number): boolean {
+  return getTrialDaysRemaining(startISO, totalDays) > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,4 +735,203 @@ export function summarizeHistory(
     totalFailed,
     winRatePct: decided > 0 ? Math.round((totalWon / decided) * 100) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Team history
+// ---------------------------------------------------------------------------
+// Reads from the `team_match_history` view (see supabase/schema.sql), which
+// is derived entirely from graded fixtures already in the database — no
+// separate write path needed. Coverage is necessarily partial: only teams
+// that have actually appeared in a generated ticket at some point will show
+// up here, not a comprehensive record of every match a team has ever played.
+
+export interface TeamMatchResult {
+  opponent: string;
+  venue: 'home' | 'away';
+  goalsFor: number;
+  goalsAgainst: number;
+  result: 'W' | 'D' | 'L';
+  league: string;
+  kickoff: string;
+}
+
+export interface TeamFormSummary {
+  team: string;
+  matchesFound: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  recentResults: TeamMatchResult[]; // most recent first
+}
+
+/**
+ * Looks up a team's known match history (most recent first, up to `limit`).
+ * Returns null on any failure (including "no data yet") rather than
+ * throwing, so callers can show a clean "no history yet" state instead of
+ * crashing — matches the same defensive pattern used elsewhere in this file.
+ */
+export async function fetchTeamHistory(teamName: string, limit: number = 10): Promise<TeamFormSummary | null> {
+  try {
+    const { data, error } = await supabase
+      .from('team_match_history')
+      .select('opponent, venue, goals_for, goals_against, result, league, kickoff')
+      .eq('team', teamName)
+      .order('kickoff', { ascending: false })
+      .limit(limit);
+
+    if (error || !data || data.length === 0) return null;
+
+    const recentResults: TeamMatchResult[] = data.map((row: any) => ({
+      opponent: row.opponent,
+      venue: row.venue,
+      goalsFor: row.goals_for,
+      goalsAgainst: row.goals_against,
+      result: row.result,
+      league: row.league,
+      kickoff: row.kickoff,
+    }));
+
+    return {
+      team: teamName,
+      matchesFound: recentResults.length,
+      wins: recentResults.filter((r) => r.result === 'W').length,
+      draws: recentResults.filter((r) => r.result === 'D').length,
+      losses: recentResults.filter((r) => r.result === 'L').length,
+      recentResults,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] Team history query failed:', err);
+    return null;
+  }
+}
+
+/** A plain web-search URL for a team — the "external search" fallback, since a live news API needs a backend to hold its key safely (this app has none). */
+export function webSearchUrlForTeam(teamName: string): string {
+  return `https://www.google.com/search?q=${encodeURIComponent(`${teamName} football news`)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Admin-editable app settings
+// ---------------------------------------------------------------------------
+// Reads/writes the single-row `app_settings` table (see supabase/schema.sql).
+// Anyone can read it (the live site needs to, to render the current theme);
+// only a user listed in the `admins` table can successfully update it — that
+// restriction is enforced by Postgres RLS, not by anything in this file, so
+// it holds even if the frontend code were bypassed entirely.
+
+export interface AppSettings {
+  primaryColor: string;
+  accentColor: string;
+  backgroundColor: string;
+  fontChoice: string;
+  heroHeadline: string;
+  heroSubtext: string;
+  showPerformanceHistory: boolean;
+  showTeamSearch: boolean;
+}
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  primaryColor: '#0b8a4f',
+  accentColor: '#0b8a4f',
+  backgroundColor: '#f4f6f5',
+  fontChoice: 'inter',
+  heroHeadline: 'Curated tickets, graded in the open.',
+  heroSubtext:
+    'Odd Saint offers football predictions only — not a betting operator, not financial advice. Every pick is AI-assisted analysis, never a guarantee.',
+  showPerformanceHistory: true,
+  showTeamSearch: true,
+};
+
+/** Reads the live app settings, falling back to defaults on any failure (including before the table has ever been edited). */
+export async function fetchAppSettings(): Promise<AppSettings> {
+  try {
+    const { data, error } = await supabase.from('app_settings').select('*').eq('id', 1).single();
+    if (error || !data) return DEFAULT_APP_SETTINGS;
+
+    return {
+      primaryColor: data.primary_color ?? DEFAULT_APP_SETTINGS.primaryColor,
+      accentColor: data.accent_color ?? DEFAULT_APP_SETTINGS.accentColor,
+      backgroundColor: data.background_color ?? DEFAULT_APP_SETTINGS.backgroundColor,
+      fontChoice: data.font_choice ?? DEFAULT_APP_SETTINGS.fontChoice,
+      heroHeadline: data.hero_headline ?? DEFAULT_APP_SETTINGS.heroHeadline,
+      heroSubtext: data.hero_subtext ?? DEFAULT_APP_SETTINGS.heroSubtext,
+      showPerformanceHistory: data.show_performance_history ?? DEFAULT_APP_SETTINGS.showPerformanceHistory,
+      showTeamSearch: data.show_team_search ?? DEFAULT_APP_SETTINGS.showTeamSearch,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] App settings query failed, using defaults:', err);
+    return DEFAULT_APP_SETTINGS;
+  }
+}
+
+/**
+ * Updates one or more settings. Will silently fail to change anything (RLS
+ * blocks the write) if the current user isn't in the `admins` table — the
+ * `success: false` return is for UI feedback, not the actual security
+ * mechanism, which lives in the database.
+ */
+export async function updateAppSettings(
+  settings: Partial<AppSettings>
+): Promise<{ success: boolean; error?: string }> {
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (settings.primaryColor !== undefined) payload.primary_color = settings.primaryColor;
+  if (settings.accentColor !== undefined) payload.accent_color = settings.accentColor;
+  if (settings.backgroundColor !== undefined) payload.background_color = settings.backgroundColor;
+  if (settings.fontChoice !== undefined) payload.font_choice = settings.fontChoice;
+  if (settings.heroHeadline !== undefined) payload.hero_headline = settings.heroHeadline;
+  if (settings.heroSubtext !== undefined) payload.hero_subtext = settings.heroSubtext;
+  if (settings.showPerformanceHistory !== undefined) payload.show_performance_history = settings.showPerformanceHistory;
+  if (settings.showTeamSearch !== undefined) payload.show_team_search = settings.showTeamSearch;
+
+  try {
+    const { error } = await supabase.from('app_settings').update(payload).eq('id', 1);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Archive access level
+// ---------------------------------------------------------------------------
+// The ticket archive (browsing past days' tickets) isn't open to everyone:
+// - Admins (see `admins` table): unrestricted, any past date.
+// - Subscribers (see `subscribers` table): up to the last 5 days.
+// - Everyone else: no access at all.
+// Both checks query the current signed-in user's own row — RLS on both
+// tables only allows a user to read their own membership, so this can't be
+// used to enumerate who else is an admin/subscriber.
+
+export type ArchiveAccess = { level: 'admin' } | { level: 'subscriber'; maxDaysBack: number } | { level: 'none' };
+
+const SUBSCRIBER_ARCHIVE_DAYS = 5;
+
+export async function getArchiveAccess(userId: string | null): Promise<ArchiveAccess> {
+  if (!userId) return { level: 'none' };
+
+  try {
+    const { data: adminRow } = await supabase.from('admins').select('user_id').eq('user_id', userId).maybeSingle();
+    if (adminRow) return { level: 'admin' };
+
+    const { data: subRow } = await supabase
+      .from('subscribers')
+      .select('user_id, active, expires_at')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const isActiveSubscriber =
+      subRow?.active && (!subRow.expires_at || new Date(subRow.expires_at).getTime() > Date.now());
+
+    if (isActiveSubscriber) return { level: 'subscriber', maxDaysBack: SUBSCRIBER_ARCHIVE_DAYS };
+
+    return { level: 'none' };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] Archive access check failed, defaulting to no access:', err);
+    return { level: 'none' };
+  }
 }
