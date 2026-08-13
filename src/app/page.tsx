@@ -17,6 +17,7 @@ import {
   TIER_CONFIG,
   ANONYMOUS_TRIAL_DAYS,
   SIGNED_UP_TRIAL_DAYS,
+  getTrialPolicy,
   type Ticket,
   type Match,
   type MatchStatus,
@@ -24,6 +25,7 @@ import {
   type TicketTier,
   type TeamFormSummary,
   type ArchiveAccess,
+  type TrialPolicy,
 } from '@/lib/dataFetcher';
 
 // ---------------------------------------------------------------------------
@@ -1893,12 +1895,14 @@ function TrialReminderBanner({
   userEmail,
   daysLeft,
   signedUpDaysElapsed,
+  signedUpTotalDays,
   onSignUpClick,
   onUpgradeClick,
 }: {
   userEmail: string | null;
   daysLeft: number;
   signedUpDaysElapsed: number;
+  signedUpTotalDays: number;
   onSignUpClick: () => void;
   onUpgradeClick: () => void;
 }) {
@@ -1910,10 +1914,15 @@ function TrialReminderBanner({
     setDismissed(true);
   }
 
-  // Anonymous visitor, still within the 14-day window → nudge to sign up for +30 more days.
+  // Anonymous visitor, still within the trial window → nudge to sign up.
   const showSignUpNudge = !userEmail && daysLeft > 0;
-  // Signed-up user, day 15+ of their 30-day window → nudge to upgrade.
-  const showUpgradeNudge = !!userEmail && signedUpDaysElapsed >= 15 && daysLeft > 0;
+  // Signed-up user, past the halfway point of their window → nudge to
+  // upgrade. Scales with the actual policy rather than a hardcoded "15" —
+  // that matters once the 50k-subscriber milestone sets signedUpTotalDays
+  // to 0, where the nudge correctly starts immediately instead of a fixed
+  // day count that would never be reached.
+  const upgradeThreshold = Math.ceil(signedUpTotalDays / 2);
+  const showUpgradeNudge = !!userEmail && signedUpDaysElapsed >= upgradeThreshold && daysLeft > 0;
 
   if (!showSignUpNudge && !showUpgradeNudge) return null;
 
@@ -1933,7 +1942,9 @@ function TrialReminderBanner({
     >
       <div style={{ fontSize: 11.5, color: COLORS.textPrimary, lineHeight: 1.4 }}>
         {showSignUpNudge
-          ? `Sign up free and get ${SIGNED_UP_TRIAL_DAYS} more days — ${daysLeft} day${daysLeft === 1 ? '' : 's'} left on your trial.`
+          ? signedUpTotalDays > 0
+            ? `Sign up free and get ${signedUpTotalDays} more day${signedUpTotalDays === 1 ? '' : 's'} — ${daysLeft} day${daysLeft === 1 ? '' : 's'} left on your trial.`
+            : `Sign up before your trial ends to keep access — ${daysLeft} day${daysLeft === 1 ? '' : 's'} left.`
           : `Loving Odd Saint? Plans start at $2.49/week — ${daysLeft} free day${daysLeft === 1 ? '' : 's'} left.`}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
@@ -2016,6 +2027,11 @@ export default function Page() {
   const [showTeamSearch, setShowTeamSearch] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [archiveAccess, setArchiveAccess] = useState<ArchiveAccess>({ level: 'none' });
+  const [trialPolicy, setTrialPolicy] = useState<TrialPolicy>({
+    anonymousDays: ANONYMOUS_TRIAL_DAYS,
+    signedUpDays: SIGNED_UP_TRIAL_DAYS,
+    milestoneReached: false,
+  });
   const [showPricing, setShowPricing] = useState(false);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [history, setHistory] = useState<DayPerformance[]>([]);
@@ -2071,32 +2087,38 @@ export default function Page() {
         // eslint-disable-next-line no-console
         console.error('[Odd Saint] Failed to load performance history:', err);
       });
+    getTrialPolicy()
+      .then(setTrialPolicy)
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[Odd Saint] Failed to load trial policy, using defaults:', err);
+      });
   }, []);
 
-  // Signed-up users get a fresh 30-day window from their account creation
-  // date; anonymous visitors get 14 days from first visit. These are
-  // deliberately different lengths — signing up is what earns the longer
-  // window (see ANONYMOUS_TRIAL_DAYS / SIGNED_UP_TRIAL_DAYS).
+  // Signed-up users get a fresh trial window from their account creation
+  // date; anonymous visitors get one from first visit. These lengths are
+  // dynamic — see getTrialPolicy(), which tightens both once the app
+  // crosses the 50,000-active-subscriber milestone.
   const trialActive = useMemo(
     () =>
       userEmail
-        ? isWithinFreeTrial(registeredAt, SIGNED_UP_TRIAL_DAYS)
-        : isWithinFreeTrial(anonTrialStart, ANONYMOUS_TRIAL_DAYS),
-    [userEmail, registeredAt, anonTrialStart]
+        ? isWithinFreeTrial(registeredAt, trialPolicy.signedUpDays)
+        : isWithinFreeTrial(anonTrialStart, trialPolicy.anonymousDays),
+    [userEmail, registeredAt, anonTrialStart, trialPolicy]
   );
   const daysLeft = useMemo(
     () =>
       userEmail
-        ? getTrialDaysRemaining(registeredAt, SIGNED_UP_TRIAL_DAYS)
-        : getTrialDaysRemaining(anonTrialStart, ANONYMOUS_TRIAL_DAYS),
-    [userEmail, registeredAt, anonTrialStart]
+        ? getTrialDaysRemaining(registeredAt, trialPolicy.signedUpDays)
+        : getTrialDaysRemaining(anonTrialStart, trialPolicy.anonymousDays),
+    [userEmail, registeredAt, anonTrialStart, trialPolicy]
   );
   // How many days into the signed-up trial someone is — used to trigger
   // the day-15+ upgrade-to-paid reminder.
   const signedUpDaysElapsed = useMemo(() => {
     if (!userEmail || !registeredAt) return 0;
-    return SIGNED_UP_TRIAL_DAYS - getTrialDaysRemaining(registeredAt, SIGNED_UP_TRIAL_DAYS);
-  }, [userEmail, registeredAt]);
+    return trialPolicy.signedUpDays - getTrialDaysRemaining(registeredAt, trialPolicy.signedUpDays);
+  }, [userEmail, registeredAt, trialPolicy]);
 
   function handleWatchAd(ticketId: string) {
     setAdTicketId(ticketId);
@@ -2281,6 +2303,7 @@ export default function Page() {
           userEmail={userEmail}
           daysLeft={daysLeft}
           signedUpDaysElapsed={signedUpDaysElapsed}
+          signedUpTotalDays={trialPolicy.signedUpDays}
           onSignUpClick={() => setShowLoginModal(true)}
           onUpgradeClick={() => setShowPricing(true)}
         />
