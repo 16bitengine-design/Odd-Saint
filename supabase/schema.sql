@@ -213,3 +213,39 @@ alter table subscribers enable row level security;
 drop policy if exists "user can read own subscription" on subscribers;
 create policy "user can read own subscription" on subscribers for select to authenticated
   using (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------------
+-- App-wide stats (currently just the active subscriber count)
+-- ---------------------------------------------------------------------------
+-- Public can read the count (it's just a number, not individual identities)
+-- so the frontend can check the 50,000-subscriber milestone and tighten the
+-- trial accordingly. Kept accurate via a trigger rather than incremented
+-- from webhook code — that way it stays correct regardless of whether a
+-- subscriber row came from a payment webhook or was added manually by an
+-- admin via Supabase's Table Editor.
+create table if not exists app_stats (
+  id int primary key default 1 check (id = 1),
+  subscriber_count int not null default 0
+);
+
+insert into app_stats (id) values (1) on conflict (id) do nothing;
+
+grant select on app_stats to anon, authenticated;
+alter table app_stats enable row level security;
+drop policy if exists "public read app_stats" on app_stats;
+create policy "public read app_stats" on app_stats for select using (true);
+
+create or replace function sync_subscriber_count() returns trigger as $$
+begin
+  update app_stats
+  set subscriber_count = (select count(*) from subscribers where active = true)
+  where id = 1;
+  return null;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists subscribers_count_sync on subscribers;
+create trigger subscribers_count_sync
+  after insert or update or delete on subscribers
+  for each statement
+  execute function sync_subscriber_count();
