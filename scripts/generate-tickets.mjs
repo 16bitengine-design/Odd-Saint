@@ -39,8 +39,11 @@ const DEFAULT_LEAGUE_ALLOWLIST = new Set([
   2,   // UEFA Champions League
   3,   // UEFA Europa League
   88,  // Eredivisie
-  94,  // Primeira Liga
   253, // MLS
+  // Belgium, Denmark, Norway are intentionally NOT hardcoded here — their
+  // real numeric league IDs aren't something to guess. Run the "Resolve
+  // League IDs" workflow (scripts/resolve-leagues.mjs already targets all
+  // three) to bring them in via leagues.json with verified IDs instead.
 ]);
 
 function loadLeagueAllowlist() {
@@ -70,6 +73,21 @@ const LEAGUE_ALLOWLIST = loadLeagueAllowlist();
 // leaves headroom for the separate grading job, which runs several times
 // the same day.
 const MAX_ODDS_LOOKUPS_PER_RUN = 25;
+
+// Priority leagues get first pick both when the API request budget limits
+// how many fixtures get priced, and when assembling tickets from the
+// priced pool. Belgium, Denmark, and Norway are prioritized here per
+// product direction, replacing Portugal's former default-set slot. League
+// *names* are used (rather than numeric IDs) since these are confirmed
+// values from API-Football's published league list, unlike guessed ID
+// numbers.
+const PRIORITY_LEAGUE_NAMES = new Set([
+  'Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1',
+  'UEFA Champions League', 'UEFA Europa League', 'Eredivisie', 'MLS',
+  'Jupiler Pro League', // Belgium
+  'Superligaen',        // Denmark
+  'Eliteserien',        // Norway
+]);
 
 // How many extra days ahead to pull fixtures for the two "Weekly" tiers.
 // API-Football's FREE plan only allows querying a narrow window around
@@ -106,6 +124,12 @@ const TIER_CONFIG = [
   { tier: 'diamond', label: 'Diamond', matchCount: 15, oddsRange: '300+', alwaysFree: false },
   { tier: 'weekly_lite', label: 'Weekly Lite', matchCount: 20, oddsRange: 'Mixed', alwaysFree: false },
   { tier: 'weekly_titan', label: 'Weekly Titan', matchCount: 30, oddsRange: 'Mixed', alwaysFree: false },
+  // Single-match, ultra-high-confidence category. Only ever one match —
+  // the single most confident pick available that day, and only ever
+  // included if it clears SAINTS_LOCK_MIN_CONFIDENCE (see below), well
+  // above the standard MIN_CONFIDENCE floor. $1, no sign-up required — see
+  // the separate anonymous-checkout design.
+  { tier: 'saints_lock', label: "Saint's Lock", matchCount: 1, oddsRange: '1.5-2', alwaysFree: false },
 ];
 
 // Numeric cumulative-odds targets matching each tier's oddsRange label
@@ -121,6 +145,7 @@ const TIER_ODDS_TARGET = {
   gold: [5, 10],
   platinum: [25, 300],
   diamond: [300, Infinity],
+  saints_lock: [1.5, 2],
 };
 
 function dateStr(d) {
@@ -135,12 +160,18 @@ async function fetchPricedFixtures(dates, maxOddsLookups) {
 
   for (const d of dates) {
     const fixtures = await getFixturesForDate(d);
-    const candidates = fixtures.filter(
-      (f) =>
-        LEAGUE_ALLOWLIST.has(f.league?.id) &&
-        !isBigClash(f.teams?.home?.name, f.teams?.away?.name) &&
-        !isExcluded(f.teams?.home?.name, f.teams?.away?.name)
-    );
+    const candidates = fixtures
+      .filter(
+        (f) =>
+          LEAGUE_ALLOWLIST.has(f.league?.id) &&
+          !isBigClash(f.teams?.home?.name, f.teams?.away?.name) &&
+          !isExcluded(f.teams?.home?.name, f.teams?.away?.name)
+      )
+      .sort((a, b) => {
+        const aPriority = PRIORITY_LEAGUE_NAMES.has(a.league?.name) ? 1 : 0;
+        const bPriority = PRIORITY_LEAGUE_NAMES.has(b.league?.name) ? 1 : 0;
+        return bPriority - aPriority;
+      });
 
     for (const f of candidates) {
       if (oddsLookupsUsed >= maxOddsLookups) break;
@@ -174,14 +205,22 @@ async function fetchPricedFixtures(dates, maxOddsLookups) {
     }
   }
 
-  // Highest-confidence picks first.
-  return Array.from(seen.values()).sort((a, b) => b.confidence - a.confidence);
+  // Priority leagues first, then highest-confidence picks within each tier.
+  return Array.from(seen.values()).sort((a, b) => {
+    const aPriority = PRIORITY_LEAGUE_NAMES.has(a.league) ? 1 : 0;
+    const bPriority = PRIORITY_LEAGUE_NAMES.has(b.league) ? 1 : 0;
+    if (aPriority !== bPriority) return bPriority - aPriority;
+    return b.confidence - a.confidence;
+  });
 }
 
 // A fixture is skipped entirely if nothing viable clears this confidence
 // floor — better to generate one fewer match, or even skip a slip, than to
 // force in a pick the market itself doesn't consider a clear favorite.
-const MIN_CONFIDENCE = 62;
+// Raised from 62 → 68: not every match from an allowed league is fit to be
+// on a ticket — quality over quantity is the explicit priority here, even
+// if it means fewer tickets on a given day.
+const MIN_CONFIDENCE = 68;
 
 // Result-based markets to steer away from when priced this short — an
 // extremely tight price on any of these can still be upset (a draw, a cup
@@ -265,24 +304,24 @@ function isExcluded(homeTeam, awayTeam) {
   return EXCLUDED_TEAMS.has(homeTeam) || EXCLUDED_TEAMS.has(awayTeam);
 }
 
-/** Saturday or Sunday, checked in UTC (matches the pipeline's other date handling). */
-function isWeekend(date) {
-  const day = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
-  return day === 0 || day === 6;
-}
+// Every standard category caps at this many tickets per day, regardless of
+// how large the fixture pool is — a bigger pool means a better chance of
+// REACHING this cap with genuinely well-priced picks, not permission to
+// exceed it. Supersedes the older fixed-5/day Gold rule and the
+// weekend-max-4 rule — quality over quantity applies uniformly now.
+const MAX_TICKETS_PER_CATEGORY = 3;
 
 function getDailySlipCount(tier, poolSize, date) {
-  if (tier === 'gold') return 5;
-  if (tier === 'mega' || tier === 'bronze' || tier === 'silver') {
-    // Weekends carry far more real fixtures across every league, so the
-    // platform always generates the maximum slip count on Sat/Sun rather
-    // than scaling it down — no reason to under-produce on the busiest
-    // football days of the week.
-    if (isWeekend(date)) return 4;
-    // Weekdays scale with how many real fixtures are actually available today.
-    return Math.min(4, Math.max(1, Math.ceil(poolSize / 10)));
+  if (tier === 'saints_lock') return 2; // deliberately lower than the standard cap — see SAINTS_LOCK_MIN_CONFIDENCE
+  if (tier === 'platinum' || tier === 'diamond' || tier === 'weekly_lite' || tier === 'weekly_titan') {
+    return 1; // large accumulators — one curated slip a day, unchanged
   }
-  return 1;
+  // mega / bronze / silver / gold: scale with real fixture availability,
+  // capped at MAX_TICKETS_PER_CATEGORY. Weekends naturally produce a
+  // bigger, higher-quality pool (more leagues playing at once), so they'll
+  // more often reach the cap on their own — no special-cased override
+  // needed anymore now that the cap applies uniformly.
+  return Math.min(MAX_TICKETS_PER_CATEGORY, Math.max(1, Math.ceil(poolSize / 10)));
 }
 
 /** Narrows the pool to safer, lower-odds picks for tiers under 7 matches. */
@@ -362,6 +401,66 @@ function pickFixturesForSlip(pool, matchCount, usageCount, targetRange) {
   return picks;
 }
 
+// Saint's Lock demands a far higher confidence bar than any other tier —
+// "next to impossible to get wrong" framing means this should almost never
+// miss. Well above the standard MIN_CONFIDENCE floor (68) used everywhere
+// else. If fewer than 2 fixtures clear this bar on a given day, fewer than
+// 2 Saint's Lock tickets get produced — quality over quantity applies here
+// most strictly of all.
+const SAINTS_LOCK_MIN_CONFIDENCE = 85;
+
+/**
+ * Dedicated selection for Saint's Lock — unlike every other tier (which
+ * uses pickFixturesForSlip's least-used/safest-first logic), this picks
+ * strictly the highest-confidence qualifying fixtures in the whole day's
+ * pool, filtered to the 1.5–2.0 odds band and the much higher confidence
+ * floor above. Each of up to 2 tickets uses a distinct fixture.
+ */
+function buildSaintsLockTickets(dailyPool, usageCount, today) {
+  const config = TIER_CONFIG.find((c) => c.tier === 'saints_lock');
+  const [minOdds, maxOdds] = TIER_ODDS_TARGET.saints_lock;
+  const maxTickets = getDailySlipCount('saints_lock', dailyPool.length, new Date());
+
+  const qualifying = dailyPool
+    .filter((p) => {
+      const used = usageCount.get(p.fixtureId) ?? 0;
+      return (
+        used < MAX_FIXTURE_APPEARANCES_PER_DAY &&
+        p.odds >= minOdds &&
+        p.odds <= maxOdds &&
+        p.confidence >= SAINTS_LOCK_MIN_CONFIDENCE
+      );
+    })
+    .sort((a, b) => b.confidence - a.confidence);
+
+  const chosen = qualifying.slice(0, maxTickets);
+  const tickets = [];
+  const ticketMatches = [];
+  const fixturesUsed = [];
+
+  chosen.forEach((pick, i) => {
+    usageCount.set(pick.fixtureId, (usageCount.get(pick.fixtureId) ?? 0) + 1);
+    fixturesUsed.push(pick);
+
+    const ticketId = `${today}-saints_lock-${i}`;
+    const slipLabel = chosen.length > 1 ? `${i + 1} of ${chosen.length}` : null;
+
+    tickets.push({
+      id: ticketId,
+      ticket_date: today,
+      tier: 'saints_lock',
+      slip_label: slipLabel,
+      match_count: 1,
+      odds_range: config.oddsRange,
+      total_odds: pick.odds,
+      is_free: false,
+    });
+    ticketMatches.push({ ticket_id: ticketId, fixture_id: pick.fixtureId, sort_order: 0 });
+  });
+
+  return { tickets, ticketMatches, fixturesUsed };
+}
+
 function buildTickets(dailyPool, weeklyPool) {
   const now = new Date();
   const today = dateStr(now);
@@ -370,7 +469,17 @@ function buildTickets(dailyPool, weeklyPool) {
   const fixturesUsed = new Map();
   const usageCount = new Map(); // shared across every tier/slip for the day
 
+  // Saint's Lock uses its own dedicated selection (see buildSaintsLockTickets)
+  // rather than the generic per-tier loop below — it's held to a much
+  // stricter confidence bar than every other category.
+  const saintsLock = buildSaintsLockTickets(dailyPool, usageCount, today);
+  tickets.push(...saintsLock.tickets);
+  ticketMatches.push(...saintsLock.ticketMatches);
+  saintsLock.fixturesUsed.forEach((f) => fixturesUsed.set(f.fixtureId, f));
+
   TIER_CONFIG.forEach((config) => {
+    if (config.tier === 'saints_lock') return; // handled above
+
     const isWeekly = config.tier === 'weekly_lite' || config.tier === 'weekly_titan';
     const basePool = isWeekly ? weeklyPool : dailyPool;
     const pool = poolForTier(basePool, config.tier);
