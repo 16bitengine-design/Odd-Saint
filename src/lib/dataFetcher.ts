@@ -26,7 +26,8 @@ export type TicketTier =
   | 'platinum'
   | 'diamond'
   | 'weekly_lite'
-  | 'weekly_titan';
+  | 'weekly_titan'
+  | 'saints_lock';
 
 export interface Match {
   id: string;
@@ -73,6 +74,7 @@ export const TIER_CONFIG: TierConfig[] = [
   { tier: 'diamond', label: 'Diamond', matchCount: 15, oddsRange: '300+', alwaysFree: false },
   { tier: 'weekly_lite', label: 'Weekly Lite', matchCount: 20, oddsRange: 'Mixed', alwaysFree: false },
   { tier: 'weekly_titan', label: 'Weekly Titan', matchCount: 30, oddsRange: 'Mixed', alwaysFree: false },
+  { tier: 'saints_lock', label: "Saint's Lock", matchCount: 1, oddsRange: '1.5-2', alwaysFree: false },
 ];
 
 // ---------------------------------------------------------------------------
@@ -88,19 +90,20 @@ export const TIER_CONFIG: TierConfig[] = [
 // - Everything else (Platinum, Diamond, Weekly Lite, Weekly Titan) ships 1
 //   curated slip a day, since these are large accumulators by nature.
 
-function isWeekend(date: Date): boolean {
-  const day = date.getDay(); // 0 = Sunday, 6 = Saturday
-  return day === 0 || day === 6;
-}
+// Matches generate-tickets.mjs's MAX_TICKETS_PER_CATEGORY — quality over
+// quantity applies uniformly now, replacing the old fixed-5/day Gold rule
+// and the weekend-max-4 override.
+const MAX_TICKETS_PER_CATEGORY = 3;
 
 function getDailySlipCount(tier: TicketTier, day: string, date: Date): number {
-  if (tier === 'gold') return 5;
-  if (tier === 'mega' || tier === 'bronze' || tier === 'silver') {
-    if (isWeekend(date)) return 4;
-    const busyness = hashSeed(`${day}-busyness`) / 233280; // deterministic 0..1
-    return 1 + Math.round(busyness * 3); // 1..4, maxing out on "busy" days
+  if (tier === 'saints_lock') return 2; // deliberately lower — see SAINTS_LOCK_MIN_CONFIDENCE
+  if (tier === 'platinum' || tier === 'diamond' || tier === 'weekly_lite' || tier === 'weekly_titan') {
+    return 1; // large accumulators — one curated slip a day
   }
-  return 1;
+  // mega / bronze / silver / gold: scale with a deterministic "busyness"
+  // factor, capped at MAX_TICKETS_PER_CATEGORY.
+  const busyness = hashSeed(`${day}-busyness`) / 233280; // deterministic 0..1
+  return Math.min(MAX_TICKETS_PER_CATEGORY, 1 + Math.round(busyness * (MAX_TICKETS_PER_CATEGORY - 1)));
 }
 
 
@@ -526,9 +529,60 @@ export async function fetchTicketsByTier(tier: TicketTier, date: Date = new Date
  * Signing up grants a separate, fresh SIGNED_UP_TRIAL_DAYS window on top —
  * up to ANONYMOUS_TRIAL_DAYS + SIGNED_UP_TRIAL_DAYS = 44 total free days if
  * someone signs up on day 1 of browsing.
+ *
+ * These are the DEFAULT values, used while the app is still growing. Once
+ * SUBSCRIBER_MILESTONE active subscribers is reached, getTrialPolicy()
+ * below switches new visitors to a tighter policy instead — see there.
  */
 export const ANONYMOUS_TRIAL_DAYS = 14;
 export const SIGNED_UP_TRIAL_DAYS = 30;
+
+const SUBSCRIBER_MILESTONE = 50_000;
+// After the milestone: a much shorter free look, and no signed-up bonus —
+// continued access past the 7 days requires actually subscribing rather
+// than just creating an account.
+const POST_MILESTONE_ANONYMOUS_TRIAL_DAYS = 7;
+const POST_MILESTONE_SIGNED_UP_TRIAL_DAYS = 0;
+
+export interface TrialPolicy {
+  anonymousDays: number;
+  signedUpDays: number;
+  milestoneReached: boolean;
+}
+
+/**
+ * Reads the live active-subscriber count (see app_stats in
+ * supabase/schema.sql, kept accurate by a database trigger) and returns
+ * which trial policy currently applies. Falls back to the pre-milestone
+ * defaults on any failure — never lets a Supabase hiccup accidentally
+ * shorten everyone's trial.
+ */
+export async function getTrialPolicy(): Promise<TrialPolicy> {
+  const defaults: TrialPolicy = {
+    anonymousDays: ANONYMOUS_TRIAL_DAYS,
+    signedUpDays: SIGNED_UP_TRIAL_DAYS,
+    milestoneReached: false,
+  };
+
+  try {
+    const { data, error } = await supabase.from('app_stats').select('subscriber_count').eq('id', 1).single();
+    if (error || !data) return defaults;
+
+    const count: number = data.subscriber_count ?? 0;
+    if (count >= SUBSCRIBER_MILESTONE) {
+      return {
+        anonymousDays: POST_MILESTONE_ANONYMOUS_TRIAL_DAYS,
+        signedUpDays: POST_MILESTONE_SIGNED_UP_TRIAL_DAYS,
+        milestoneReached: true,
+      };
+    }
+    return defaults;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Odd Saint] Trial policy check failed, using defaults:', err);
+    return defaults;
+  }
+}
 
 /**
  * Trial helper: given a start date (ISO string) and the trial length in
