@@ -1,9 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Static export keeps the deploy footprint tiny and works flawlessly
-  // on Vercel's free tier (no server functions needed since all data
-  // access goes through the Supabase client SDK).
-  output: 'export',
+  // Static export was removed here — real payment processing needs actual
+  // server routes (to hold secret keys and verify webhook signatures,
+  // neither of which is safe to do in browser-side code). Vercel hosts the
+  // rest of the app essentially the same as before (still fast, still free
+  // tier), it just now also runs a handful of serverless functions under
+  // /app/api for checkout + webhooks.
 
   // Gzip/Brotli compression for smaller payloads on low-end mobile networks.
   compress: true,
@@ -12,8 +14,8 @@ const nextConfig = {
   reactStrictMode: true,
 
   images: {
-    // next/image optimization requires a server; disable it for static export
-    // and rely on pre-sized, compressed source assets instead.
+    // Kept from the static-export era — still avoids next/image's
+    // optimization pipeline, since this app uses no images that need it.
     unoptimized: true,
   },
 
