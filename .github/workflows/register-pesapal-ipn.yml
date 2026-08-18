@@ -1,1 +1,31 @@
+name: Odd Saint — Register Pesapal IPN
 
+# Manual trigger ONLY — no schedule. This is a one-time setup step (or a
+# "run again if the site URL ever changes" step), not a recurring job.
+# The resulting ipn_id gets printed in this run's log — copy it from there
+# into Vercel as the PESAPAL_IPN_ID environment variable.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Register Pesapal IPN URL
+        env:
+          PESAPAL_CONSUMER_KEY: ${{ secrets.PESAPAL_CONSUMER_KEY }}
+          PESAPAL_CONSUMER_SECRET: ${{ secrets.PESAPAL_CONSUMER_SECRET }}
+          PESAPAL_ENV: ${{ secrets.PESAPAL_ENV }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+        run: node scripts/register-pesapal-ipn.mjs
