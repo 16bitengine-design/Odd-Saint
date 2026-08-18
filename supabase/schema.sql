@@ -249,3 +249,50 @@ create trigger subscribers_count_sync
   after insert or update or delete on subscribers
   for each statement
   execute function sync_subscriber_count();
+
+-- ---------------------------------------------------------------------------
+-- Saint's Lock access
+-- ---------------------------------------------------------------------------
+-- Deliberately separate from `subscribers` — Saint's Lock is a distinct
+-- product (single-match, ultra-high-confidence picks) with its own pricing
+-- ($1.50/day, $7/week, $27/month) and its own rule: sign-up is required and
+-- no free trial ever applies here, unlike the rest of the app.
+create table if not exists saints_lock_access (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  active boolean not null default true,
+  expires_at timestamptz not null, -- always required here — no indefinite/trial access
+  created_at timestamptz not null default now()
+);
+
+grant select on saints_lock_access to authenticated;
+alter table saints_lock_access enable row level security;
+drop policy if exists "user can read own saints_lock_access" on saints_lock_access;
+create policy "user can read own saints_lock_access" on saints_lock_access for select to authenticated
+  using (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------------
+-- Pending transactions
+-- ---------------------------------------------------------------------------
+-- PawaPay and Pesapal don't reliably echo back arbitrary metadata the way
+-- Stripe/Flutterwave's `metadata` fields did — this table is written at
+-- checkout-initiation time (before redirecting/pushing to the customer's
+-- phone), keyed by that provider's own transaction ID, so the webhook or
+-- status-check can look up who's paying for what once payment completes.
+-- Only ever written/read by server code using the service role key — never
+-- exposed to the browser.
+create table if not exists pending_transactions (
+  id text primary key, -- PawaPay depositId or Pesapal order_tracking_id
+  provider text not null check (provider in ('pawapay', 'pesapal')),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  email text,
+  product text not null check (product in ('subscription', 'saints_lock')),
+  plan text not null,
+  status text not null default 'pending' check (status in ('pending', 'completed', 'failed')),
+  created_at timestamptz not null default now()
+);
+
+-- No RLS policies needed here at all — this table is never queried with the
+-- anon/authenticated client, only server-side via the service role key,
+-- which bypasses RLS anyway. Leaving RLS disabled (default) rather than
+-- adding policies that would never be exercised.
