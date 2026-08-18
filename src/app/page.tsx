@@ -766,10 +766,16 @@ function TicketCard({
 }) {
   const [open, setOpen] = useState(false);
   const overallStatus = getTicketStatus(ticket);
+  const isSaintsLock = ticket.tier === 'saints_lock';
   // Weekly Titan is free forever once someone signs up — the signup
   // incentive, separate from the time-limited trial.
   const isWeeklyTitanUnlockedForever = ticket.tier === 'weekly_titan' && isSignedIn;
-  const isLocked = !ticket.isFree && !isWeeklyTitanUnlockedForever && !trialActive && !unlocked;
+  // Saint's Lock ignores ticket.isFree/trial/unlocked entirely — it has its
+  // own product, its own pricing, sign-up is mandatory, and no free trial
+  // ever applies to it (see saints_lock_access in supabase/schema.sql).
+  const isLocked = isSaintsLock
+    ? !hasSaintsLockAccess
+    : !ticket.isFree && !isWeeklyTitanUnlockedForever && !trialActive && !unlocked;
 
   const borderColor =
     overallStatus === 'green' ? COLORS.emerald : overallStatus === 'red' ? COLORS.red : COLORS.amber;
@@ -1667,30 +1673,103 @@ function PricingModal({
     { id: 'yearly' as const, label: 'Yearly', price: '$67', period: '/year', badge: 'Best value' },
   ];
 
-  const [loadingKey, setLoadingKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Kept in sync with COUNTRY_CORRESPONDENTS in src/lib/pawapay.ts — any
+  // country NOT in this list still works, it just falls through to
+  // Pesapal's redirect page on the backend instead of the direct phone-push
+  // flow, which is why phone number isn't required for those.
+  const PAWAPAY_COUNTRIES = new Set(['ZM', 'KE', 'UG', 'GH', 'RW', 'TZ', 'MW']);
+  const countries = [
+    { code: 'ZM', label: 'Zambia' },
+    { code: 'KE', label: 'Kenya' },
+    { code: 'UG', label: 'Uganda' },
+    { code: 'GH', label: 'Ghana' },
+    { code: 'RW', label: 'Rwanda' },
+    { code: 'TZ', label: 'Tanzania' },
+    { code: 'MW', label: 'Malawi' },
+    { code: 'OTHER', label: 'Other / card payment' },
+  ];
 
-  async function startCheckout(planId: 'weekly' | 'monthly' | 'yearly', method: 'card' | 'mobile_money') {
+  const [selectedPlan, setSelectedPlan] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [countryCode, setCountryCode] = useState('KE');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [status, setStatus] = useState<'idle' | 'starting' | 'awaiting_approval' | 'error'>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const [pollDepositId, setPollDepositId] = useState<string | null>(null);
+
+  const needsPhone = PAWAPAY_COUNTRIES.has(countryCode);
+
+  // Poll PawaPay deposit status once a phone-push payment has been
+  // initiated — there's no redirect to bounce back to, so the UI has to
+  // actively check whether the customer approved on their phone yet.
+  useEffect(() => {
+    if (!pollDepositId) return;
+    let attempts = 0;
+    const maxAttempts = 24; // ~2 minutes at 5s intervals
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch(`/api/checkout/status?depositId=${encodeURIComponent(pollDepositId)}`);
+        const data = await res.json();
+        if (data.status === 'COMPLETED') {
+          clearInterval(interval);
+          window.location.reload(); // simplest way to refresh access state everywhere
+        } else if (data.status === 'FAILED' || data.status === 'REJECTED') {
+          clearInterval(interval);
+          setError('Payment was not approved. Please try again.');
+          setStatus('error');
+          setPollDepositId(null);
+        } else if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          setError('Still waiting on approval — check your phone, or try again.');
+          setStatus('error');
+          setPollDepositId(null);
+        }
+      } catch {
+        // transient network hiccup — let the next poll attempt retry
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [pollDepositId]);
+
+  async function startCheckout() {
     if (!userId || !userEmail) {
       setError('Please sign in first, then come back to subscribe.');
       return;
     }
+    if (needsPhone && !phoneNumber.trim()) {
+      setError('Phone number is required for mobile money.');
+      return;
+    }
     setError(null);
-    setLoadingKey(`${planId}-${method}`);
+    setStatus('starting');
+
     try {
       const res = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: planId, method, userId, email: userEmail }),
+        body: JSON.stringify({
+          product: 'subscription',
+          plan: selectedPlan,
+          userId,
+          email: userEmail,
+          countryCode: countryCode === 'OTHER' ? 'XX' : countryCode,
+          phoneNumber: needsPhone ? phoneNumber.trim() : undefined,
+        }),
       });
       const data = await res.json();
-      if (!res.ok || !data.url) {
-        throw new Error(data.error || 'Could not start checkout');
+      if (!res.ok) throw new Error(data.error || 'Could not start checkout');
+
+      if (data.provider === 'pesapal' && data.url) {
+        window.location.href = data.url;
+      } else if (data.provider === 'pawapay' && data.depositId) {
+        setStatus('awaiting_approval');
+        setPollDepositId(data.depositId);
+      } else {
+        throw new Error('Unexpected response from checkout');
       }
-      window.location.href = data.url;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
-      setLoadingKey(null);
+      setStatus('error');
     }
   }
 
@@ -1769,87 +1848,129 @@ function PricingModal({
           </div>
         )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {plans.map((plan) => (
-            <div
-              key={plan.label}
+        {status === 'awaiting_approval' ? (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>📱</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.textPrimary, marginBottom: 6 }}>
+              Check your phone
+            </div>
+            <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>
+              Approve the payment prompt sent to {phoneNumber} to finish subscribing.
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Plan picker */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              {plans.map((plan) => (
+                <button
+                  key={plan.id}
+                  onClick={() => setSelectedPlan(plan.id)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    textAlign: 'left',
+                    border: `1.5px solid ${selectedPlan === plan.id ? COLORS.emerald : COLORS.border}`,
+                    background: selectedPlan === plan.id ? 'rgba(11,138,79,0.06)' : 'transparent',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.textPrimary }}>
+                      {plan.label}
+                      {plan.badge && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 9.5,
+                            fontWeight: 700,
+                            color: COLORS.emerald,
+                            background: 'rgba(11,138,79,0.1)',
+                            borderRadius: 999,
+                            padding: '2px 6px',
+                          }}
+                        >
+                          {plan.badge}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: COLORS.textMuted }}>Billed {plan.label.toLowerCase()}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontFamily: FONT_DISPLAY, fontSize: 15, fontWeight: 800, color: COLORS.emerald }}>
+                      {plan.price}
+                    </div>
+                    <div style={{ fontSize: 9.5, color: COLORS.textMuted }}>{plan.period}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Unified checkout form — one screen, backend decides PawaPay vs Pesapal */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+              <select
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value)}
+                style={{
+                  padding: '9px 10px',
+                  borderRadius: 8,
+                  border: `1px solid ${COLORS.border}`,
+                  background: COLORS.surfaceAlt,
+                  color: COLORS.textPrimary,
+                  fontFamily: FONT_BODY,
+                  fontSize: 13,
+                }}
+              >
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+
+              {needsPhone && (
+                <input
+                  type="tel"
+                  placeholder="Mobile money phone number"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  style={{
+                    padding: '9px 10px',
+                    borderRadius: 8,
+                    border: `1px solid ${COLORS.border}`,
+                    background: COLORS.surfaceAlt,
+                    color: COLORS.textPrimary,
+                    fontFamily: FONT_BODY,
+                    fontSize: 13,
+                  }}
+                />
+              )}
+            </div>
+
+            <button
+              onClick={startCheckout}
+              disabled={status === 'starting' || !userId}
               style={{
-                border: `1.5px solid ${plan.highlight ? COLORS.emerald : COLORS.border}`,
-                borderRadius: 10,
-                padding: '12px 14px',
+                width: '100%',
+                padding: '11px 0',
+                borderRadius: 8,
+                border: 'none',
+                background: COLORS.emerald,
+                color: '#ffffff',
+                fontFamily: FONT_BODY,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: status === 'starting' || !userId ? 'not-allowed' : 'pointer',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.textPrimary }}>
-                    {plan.label}
-                    {plan.badge && (
-                      <span
-                        style={{
-                          marginLeft: 6,
-                          fontSize: 9.5,
-                          fontWeight: 700,
-                          color: COLORS.emerald,
-                          background: 'rgba(11,138,79,0.1)',
-                          borderRadius: 999,
-                          padding: '2px 6px',
-                        }}
-                      >
-                        {plan.badge}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>Billed {plan.label.toLowerCase()}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 17, fontWeight: 800, color: COLORS.emerald }}>
-                    {plan.price}
-                  </div>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>{plan.period}</div>
-                </div>
-              </div>
-
-              <button
-                onClick={() => startCheckout(plan.id, 'mobile_money')}
-                disabled={loadingKey !== null}
-                style={{
-                  width: '100%',
-                  padding: '10px 0',
-                  borderRadius: 7,
-                  border: 'none',
-                  background: COLORS.emerald,
-                  color: '#ffffff',
-                  fontFamily: FONT_BODY,
-                  fontWeight: 700,
-                  fontSize: 12.5,
-                  cursor: loadingKey ? 'not-allowed' : 'pointer',
-                  marginBottom: 8,
-                }}
-              >
-                {loadingKey === `${plan.id}-mobile_money` ? '...' : '📱 Pay with Mobile Money'}
-              </button>
-              <button
-                onClick={() => startCheckout(plan.id, 'card')}
-                disabled={loadingKey !== null}
-                style={{
-                  width: '100%',
-                  padding: '4px 0',
-                  background: 'none',
-                  border: 'none',
-                  color: COLORS.textMuted,
-                  fontFamily: FONT_BODY,
-                  fontWeight: 600,
-                  fontSize: 11,
-                  textDecoration: 'underline',
-                  textUnderlineOffset: 3,
-                  cursor: loadingKey ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {loadingKey === `${plan.id}-card` ? '...' : 'Or pay by card instead'}
-              </button>
-            </div>
-          ))}
-        </div>
+              {status === 'starting' ? '...' : needsPhone ? '📱 Pay with Mobile Money' : 'Continue to Payment'}
+            </button>
+          </>
+        )}
 
         {error && (
           <div style={{ marginTop: 12, fontSize: 11.5, color: COLORS.red, textAlign: 'center' }}>{error}</div>
@@ -1864,7 +1985,7 @@ function PricingModal({
             lineHeight: 1.5,
           }}
         >
-          Mobile money via Flutterwave (M-Pesa, MTN MoMo, Airtel Money, and more) · card payments also available via Stripe.
+          Mobile money via PawaPay · cards and other regions via Pesapal.
         </div>
       </div>
     </div>
