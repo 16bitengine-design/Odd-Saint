@@ -1,38 +1,69 @@
-# CLAUDE.md — OddSaint
+# CLAUDE.md
+
+# OddSaint — Project Instructions
 
 ## 1. PROJECT IDENTITY
 
-OddSaint is an AI-driven football prediction-ticket platform.
+OddSaint is a football analytics and prediction-ticket web application.
 
-The current repository is the authoritative source of truth for the project's implementation.
+The application presents football prediction tickets built from real football fixtures and bookmaker odds, tracks fixture outcomes, grades completed selections, provides historical performance information, and provides paid access to premium products.
 
-Do not assume that historical descriptions of OddSaint, 16BITENGINE, or previous versions of the project still match the current codebase.
+OddSaint is not a betting operator.
 
-Always inspect the current repository before making architectural assumptions.
+The application presents AI-assisted/statistical football analysis and must not represent predictions as guarantees.
 
----
+The current GitHub repository is the authoritative source of truth for the implementation.
 
-# 2. PRIMARY TECHNOLOGY STACK
-
-The current project uses:
-
-- Next.js 14.2.35
-- Next.js App Router
-- React 18.3.1
-- TypeScript 5.5.4
-- Supabase JS 2.45.4
-- Supabase for authentication and database functionality
-- GitHub for source control and CI/CD
-- Vercel for deployment
-- Node.js 24.x
-
-Do not replace these technologies unless there is a strong technical reason and the change is explicitly justified.
+Do not assume that historical descriptions of OddSaint, 16BITENGINE, or previous versions of the project still match the current code.
 
 ---
 
-# 3. CURRENT REPOSITORY STRUCTURE
+# 2. SOURCE OF TRUTH
 
-The current repository is organized approximately as follows:
+Use the following priority when determining how the system works:
+
+1. Current repository source code
+2. Current Supabase schema
+3. Current GitHub Actions workflows
+4. Current package/configuration files
+5. Current README/documentation
+6. Current CLAUDE.md instructions
+7. Historical conversation context
+
+If historical information conflicts with the repository, the repository wins.
+
+Never invent functionality that is not present in the repository.
+
+Never describe planned functionality as implemented functionality.
+
+If something is mocked, stubbed, incomplete, or security-sensitive, explicitly identify it as such.
+
+---
+
+# 3. CURRENT TECHNOLOGY STACK
+
+The current repository uses:
+
+* Next.js 14.2.35
+* Next.js App Router
+* React 18.3.1
+* TypeScript 5.5.4
+* Supabase JS 2.45.4
+* Supabase
+* GitHub
+* GitHub Actions
+* Vercel
+* Node.js 24.x
+
+Do not replace these technologies unnecessarily.
+
+Do not introduce a new framework or backend platform without a strong architectural reason.
+
+---
+
+# 4. REPOSITORY STRUCTURE
+
+The important current structure is:
 
 ```text
 OddSaint/
@@ -47,6 +78,11 @@ OddSaint/
 │
 ├── scripts/
 │   ├── lib/
+│   │   ├── apiFootball.mjs
+│   │   ├── markets.mjs
+│   │   ├── supabaseAdmin.mjs
+│   │   └── leagues.json
+│   │
 │   ├── generate-tickets.mjs
 │   ├── grade-tickets.mjs
 │   ├── register-pesapal-ipn.mjs
@@ -55,6 +91,17 @@ OddSaint/
 ├── src/
 │   ├── app/
 │   │   ├── api/
+│   │   │   ├── checkout/
+│   │   │   │   ├── route.ts
+│   │   │   │   └── status/
+│   │   │   │       └── route.ts
+│   │   │   │
+│   │   │   └── webhooks/
+│   │   │       ├── pawapay/
+│   │   │       │   └── route.ts
+│   │   │       └── pesapal/
+│   │   │           └── route.ts
+│   │   │
 │   │   ├── layout.tsx
 │   │   └── page.tsx
 │   │
@@ -70,748 +117,956 @@ OddSaint/
 │   └── schema.sql
 │
 ├── README.md
-├── next.config.js
 ├── package.json
+├── next.config.js
 └── tsconfig.json
 ```
 
-This structure may evolve.
+The structure may evolve.
 
-If the actual repository differs from this documentation, the repository itself takes precedence.
-
-Do not invent files or folders that do not exist.
+When it does, update the documentation rather than forcing new code into an obsolete structure.
 
 ---
 
-# 4. SOURCE-OF-TRUTH RULE
+# 5. FRONTEND
 
-The GitHub repository is the primary technical source of truth.
-
-Use this priority:
-
-1. Current source code
-2. Current database schema/migrations
-3. Current GitHub Actions workflows
-4. Current configuration
-5. Current README/documentation
-6. Current project instructions
-7. Historical conversation context
-
-If historical instructions conflict with the current repository, do not blindly follow the historical instructions.
-
-Identify the conflict and use the current implementation as the starting point.
-
----
-
-# 5. INSPECT BEFORE MODIFYING
-
-Before changing code:
-
-1. Locate the relevant file.
-2. Read the existing implementation.
-3. Identify dependencies.
-4. Identify callers.
-5. Identify database dependencies.
-6. Identify API dependencies.
-7. Identify GitHub workflow dependencies where relevant.
-8. Determine whether the requested functionality already exists.
-
-Never create a second implementation when an existing implementation can be extended.
-
----
-
-# 6. NEXT.JS APP ROUTER
-
-The project uses the Next.js App Router.
-
-Follow the existing App Router architecture.
-
-API endpoints belong under:
+The main application UI currently lives primarily in:
 
 ```text
-src/app/api/
+src/app/page.tsx
 ```
 
-API route implementations should use:
+This is currently a client component.
 
-```text
-route.ts
-```
+It contains substantial UI and application behavior, including:
 
-Use the correct server/client boundary.
+* Odd Saint branding
+* Ticket display
+* Match display
+* Match status
+* Performance history
+* Team search
+* Team history
+* Trial/access behavior
+* Subscription-related UI
+* Ad slots
+* Watch-ad/unlock behavior
+* Checkout interaction
+* User-facing disclaimers
 
-Do not expose server-only credentials or privileged operations to client-side code.
+Do not casually convert the page into a different architecture.
+
+Before extracting components or splitting the page, understand its existing state and data dependencies.
+
+Avoid unnecessary rewrites of `page.tsx`.
 
 ---
 
-# 7. SUPABASE
+# 6. DATA LAYER
 
-Supabase is a core backend component.
-
-The current database definition is represented in:
-
-```text
-supabase/schema.sql
-```
-
-Before changing database-related functionality:
-
-- Inspect the current schema.
-- Understand table relationships.
-- Inspect constraints.
-- Inspect indexes.
-- Inspect RLS policies where applicable.
-- Determine which application code depends on the affected schema.
-
-Never casually delete or rename database structures.
-
-Database changes must consider existing production data and application compatibility.
-
----
-
-# 8. SUPABASE CLIENT
-
-The repository currently contains:
-
-```text
-src/lib/supabaseClient.ts
-```
-
-Use the existing Supabase abstraction where appropriate.
-
-Do not create another Supabase client implementation without a clear architectural reason.
-
-Never expose service-role credentials to the browser.
-
----
-
-# 9. DATA FETCHING
-
-The repository currently contains:
+The primary data layer is:
 
 ```text
 src/lib/dataFetcher.ts
 ```
 
-Treat this as an important part of the application's data layer.
+It reads real ticket data from Supabase.
 
-Before changing ticket/match data behavior:
+It also contains a deterministic fallback/mock generator used when real data is unavailable.
 
-- Inspect the current implementation.
-- Determine whether data is mocked or coming from Supabase.
-- Preserve the expected data shape unless intentionally changing the application contract.
-- Update dependent components and APIs if the contract changes.
+This distinction is critical.
 
-Do not silently replace mock data with a different source without checking the current architecture.
+Real data:
+
+* Comes from Supabase
+* Is populated by the GitHub Actions ticket pipeline
+* Uses real fixtures
+* Uses bookmaker-odds-derived confidence
+* Can be graded against real results
+
+Fallback/mock data:
+
+* Is deterministic
+* Is generated locally
+* Exists to prevent the UI from breaking when real data is unavailable
+* Is placeholder/demo data
+* Must never be represented as a real historical track record
+
+Never confuse fallback/mock results with actual production performance.
 
 ---
 
-# 10. PAYMENT ARCHITECTURE
+# 7. TICKET TIERS
 
-The repository currently contains payment-related modules:
+The current data layer recognizes:
+
+* mega
+* bronze
+* silver
+* gold
+* platinum
+* diamond
+* weekly_lite
+* weekly_titan
+* saints_lock
+
+The real ticket-generation script and frontend data layer should remain consistent.
+
+If tier definitions are changed, inspect both:
 
 ```text
-src/lib/pawapay.ts
-src/lib/pesapal.ts
+src/lib/dataFetcher.ts
+scripts/generate-tickets.mjs
 ```
 
-Payment functionality is security-sensitive.
+and any database/UI logic that depends on the tier.
 
-Treat payment status as server-authoritative.
-
-Never trust a client-side statement that a payment succeeded.
-
-Payment processing must account for:
-
-- Transaction identity
-- User identity
-- Amount
-- Currency
-- Provider response
-- Payment state
-- Duplicate requests
-- Retry behavior
-- Callback/IPN/webhook processing
-
-Payment operations should be idempotent.
-
-A repeated callback must not create duplicate access, credits, subscriptions, or transactions.
-
-Never expose payment credentials to client-side code.
+Do not modify one representation while leaving contradictory definitions elsewhere.
 
 ---
 
-# 11. PESA PAL
+# 8. IMPORTANT TICKET-ENGINE DISTINCTION
 
-The repository contains an automated workflow for PesaPal IPN registration:
+The current "AI Confidence Index" is NOT a trained machine-learning prediction model.
+
+The current real generation pipeline derives confidence from bookmaker consensus/implied probability and uses transparent selection heuristics.
+
+Do not describe the current system as a trained AI model unless the repository is later changed to contain an actual trained/model-based prediction system.
+
+If improving the prediction engine, preserve this distinction.
+
+Any future ML/AI model must be separately identified and evaluated.
+
+---
+
+# 9. REAL TICKET GENERATION
+
+The main generation script is:
 
 ```text
-.github/workflows/register-pesapal-ipn.yml
-scripts/register-pesapal-ipn.mjs
-src/lib/pesapal.ts
+scripts/generate-tickets.mjs
 ```
 
-Treat these components as related.
+It:
 
-Before modifying PesaPal functionality, inspect all three areas.
+1. Retrieves real fixtures through API-Football.
+2. Filters leagues.
+3. Excludes selected difficult/high-profile clashes.
+4. Retrieves bookmaker odds.
+5. Selects viable markets.
+6. Applies confidence/odds rules.
+7. Builds ticket tiers.
+8. Writes fixtures/tickets to Supabase.
 
-Do not change the integration in only one location if the change affects the overall payment flow.
-
-Keep sandbox and production configuration separate.
-
----
-
-# 12. PAWAPAY
-
-The repository contains:
+The generation job is scheduled by:
 
 ```text
-src/lib/pawapay.ts
+.github/workflows/generate-tickets.yml
 ```
 
-Treat Pawapay as an external payment integration.
+The workflow runs daily and can also be manually dispatched.
 
-Use server-side credentials.
-
-Validate provider responses.
-
-Handle:
-
-- Network failures
-- Provider errors
-- Timeouts
-- Duplicate callbacks
-- Invalid transaction states
-- Failed transactions
-- Pending transactions
-
-Do not mark a payment as successful solely because a request to the provider was successfully sent.
+Do not change the generation script without considering API-Football request limits and GitHub Actions execution.
 
 ---
 
-# 13. ACCESS CONTROL
+# 10. API-FOOTBALL
 
-The repository contains:
+The external football data integration is under:
 
 ```text
-src/lib/grantAccess.ts
+scripts/lib/apiFootball.mjs
 ```
 
-Treat access granting as business-critical functionality.
+Treat API-Football as an external dependency.
 
-Access should only be granted after the authoritative payment/business condition has been satisfied.
+Consider:
 
-Avoid duplicating access-granting logic in multiple UI components or API routes.
+* API request limits
+* API plan limitations
+* rate limits
+* unavailable dates
+* missing odds
+* missing fixtures
+* postponed fixtures
+* malformed/incomplete responses
 
-Where possible, maintain one authoritative business-logic path.
+Do not assume every fixture has usable odds.
+
+Do not silently fabricate real football data.
 
 ---
 
-# 14. PLANS AND SUBSCRIPTIONS
+# 11. MARKET CATALOG
 
-The repository contains:
+The shared market catalog is:
+
+```text
+scripts/lib/markets.mjs
+```
+
+This is intentionally shared by ticket generation and ticket grading.
+
+The design principle is:
+
+> A market should not be selectable by the generation engine unless the grading engine can also settle it.
+
+When adding a new market:
+
+1. Add its selectable outcome definition.
+2. Define its odds range appropriately.
+3. Define its settlement function.
+4. Ensure the grading engine can resolve it.
+5. Test both generation and grading.
+
+Do not duplicate market settlement logic in separate scripts.
+
+---
+
+# 12. TICKET GRADING
+
+The grading script is:
+
+```text
+scripts/grade-tickets.mjs
+```
+
+It:
+
+1. Finds pending fixtures old enough to have finished.
+2. Retrieves results from API-Football.
+3. Confirms the fixture has a finished status.
+4. Reads the stored market.
+5. Uses the shared market settlement logic.
+6. Stores final scores.
+7. Changes the fixture status to `green` or `red`.
+
+The grading workflow runs every three hours.
+
+Do not mark a fixture as settled merely because its kickoff time has passed.
+
+---
+
+# 13. LEAGUE RESOLUTION
+
+League resolution is handled by:
+
+```text
+scripts/resolve-leagues.mjs
+```
+
+It uses API-Football's league endpoint to obtain current league IDs rather than relying entirely on guessed/hardcoded IDs.
+
+It writes:
+
+```text
+scripts/lib/leagues.json
+```
+
+The corresponding GitHub Action is:
+
+```text
+.github/workflows/resolve-leagues.yml
+```
+
+This workflow is intentionally manual.
+
+Do not make league resolution a daily operation unless there is a compelling reason.
+
+---
+
+# 14. DATABASE
+
+The authoritative database definition is:
+
+```text
+supabase/schema.sql
+```
+
+Current important tables include:
+
+* `fixtures`
+* `tickets`
+* `ticket_matches`
+* `admins`
+* `app_settings`
+* `subscribers`
+* `app_stats`
+* `saints_lock_access`
+* `pending_transactions`
+
+There is also a `team_match_history` view.
+
+Before changing database behavior:
+
+1. Read the schema.
+2. Identify affected tables.
+3. Identify RLS policies.
+4. Identify application dependencies.
+5. Identify GitHub Actions dependencies.
+6. Consider existing production data.
+
+Never casually drop or rename tables/columns.
+
+---
+
+# 15. DATABASE SECURITY
+
+The database deliberately separates public reads from privileged writes.
+
+Ticket/fixture data is publicly readable through controlled Supabase access.
+
+The automation pipeline uses the Supabase service-role key.
+
+The service-role key must NEVER be exposed to the browser.
+
+The `pending_transactions` table is intended for server-side payment processing and must not be exposed through public client access.
+
+Preserve these security boundaries.
+
+---
+
+# 16. AUTHENTICATION AND USER ACCESS
+
+Supabase Auth is part of the application architecture.
+
+User-specific access includes subscription and Saint's Lock access.
+
+The database uses `auth.users` relationships and RLS to restrict users to their own sensitive access records.
+
+Never weaken these RLS boundaries simply to make frontend queries easier.
+
+---
+
+# 17. PLANS
+
+Subscription definitions live in:
 
 ```text
 src/lib/plans.ts
 ```
 
-Treat plan definitions as centralized business logic.
+Current standard plans:
 
-Do not hard-code plan prices, access levels, or subscription rules in unrelated UI components if they already belong in the plans module.
+* Weekly — $2.49 — 7 days
+* Monthly — $7.99 — 30 days
+* Yearly — $67 — 365 days
 
-When changing a plan:
+Saint's Lock is intentionally separate:
 
-- Check payment logic.
-- Check access logic.
-- Check UI.
-- Check database implications.
-- Check existing subscriptions.
-- Check advertising or entitlement implications.
+* Daily — $1.50 — 1 day
+* Weekly — $7 — 7 days
+* Monthly — $27 — 30 days
+
+Do not hard-code prices independently in checkout/UI code.
+
+The server must derive the amount from the validated plan ID.
+
+Never trust a client-submitted price.
 
 ---
 
-# 15. TICKET SYSTEM
+# 18. ACCESS GRANTING
 
-OddSaint includes automated ticket-related processing.
-
-Current scripts include:
+Access granting is centralized in:
 
 ```text
-scripts/generate-tickets.mjs
-scripts/grade-tickets.mjs
-scripts/resolve-leagues.mjs
+src/lib/grantAccess.ts
 ```
 
-There are corresponding GitHub Actions workflows.
+The central principle is:
 
-Treat ticket generation, grading, and league resolution as related pipeline components.
+> Verified successful payment → centralized access grant → database upsert.
 
-Do not change one stage without checking how the other stages consume its output.
+Do not duplicate entitlement-granting logic in multiple payment handlers.
 
-Ticket lifecycle should remain deterministic and recoverable.
+The current implementation supports:
 
----
+* standard subscription access
+* Saint's Lock access
 
-# 16. GITHUB ACTIONS
-
-The repository currently contains automated workflows for:
-
-- AI/self-evolution maintenance
-- Ticket generation
-- Ticket grading
-- PesaPal IPN registration
-- League resolution
-
-Before modifying a script used by GitHub Actions:
-
-1. Inspect the corresponding workflow.
-2. Inspect the script.
-3. Inspect supporting libraries.
-4. Check environment variables.
-5. Check expected inputs and outputs.
-6. Check scheduling/manual triggers.
-7. Check failure behavior.
-
-Do not assume a script is only used locally.
-
----
-
-# 17. AI SELF-EVOLUTION
-
-The repository contains:
+When changing access logic, inspect:
 
 ```text
-.github/workflows/ai-self-evolution.yml
+grantAccess.ts
+plans.ts
+supabase/schema.sql
+checkout route
+payment webhooks
 ```
 
-The current README describes this workflow as a weekly maintenance process that inventories the repository, checks dependencies, performs safe minor/patch updates, verifies lint/build, and opens a pull request rather than automatically merging changes.
-
-Do not weaken this safety model.
-
-Automated evolution must remain reviewable.
-
-Never design an autonomous workflow that can silently introduce uncontrolled production changes.
-
 ---
 
-# 18. AUTOMATION PRINCIPLES
+# 19. PAYMENT ARCHITECTURE
 
-Automation should be:
-
-- Deterministic
-- Idempotent where possible
-- Recoverable
-- Observable
-- Retry-safe
-- Failure-aware
-
-Every automated process should have clearly defined:
-
-- Inputs
-- Outputs
-- State
-- Success condition
-- Failure condition
-- Retry behavior
-
-Avoid duplicate processing.
-
----
-
-# 19. ADVERTISING
-
-The current project contains an advertising placeholder system.
-
-The README identifies `AdSlot` functionality in the main application and indicates that the current implementation uses placeholder containers with `data-ad-slot` attributes.
-
-When implementing advertising:
-
-- Preserve the existing component architecture.
-- Avoid hard-coding one advertising provider unnecessarily.
-- Keep advertising configuration separate from core business logic.
-- Protect user experience.
-- Avoid misleading advertisements.
-- Ensure future provider integration can be performed without rewriting the application.
-
-Advertising must not interfere with authentication, payments, or core ticket functionality.
-
----
-
-# 20. SECURITY
-
-Always consider:
-
-- Authentication
-- Authorization
-- Supabase RLS
-- Input validation
-- Output validation
-- API abuse
-- Rate limiting
-- Credential exposure
-- Payment fraud
-- Webhook/IPN authenticity
-- Privilege escalation
-- Sensitive data exposure
-
-Never place secrets in:
-
-- Source code
-- Client bundles
-- GitHub
-- Documentation
-- Logs
-- Error messages
-
-Use environment variables.
-
----
-
-# 21. ENVIRONMENT VARIABLES
-
-Never request the user to paste real secrets into a conversation.
-
-Use variable names only.
-
-Examples:
+The unified checkout endpoint is:
 
 ```text
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
-PAWAPAY_API_KEY
-PESAPAL_CONSUMER_KEY
-PESAPAL_CONSUMER_SECRET
+src/app/api/checkout/route.ts
 ```
 
-Never output actual secret values.
+The backend chooses the payment provider.
 
-If an environment variable is missing, explain exactly where it must be configured.
+Current flow:
+
+```text
+User
+ ↓
+/api/checkout
+ ↓
+Is country/network supported by PawaPay?
+ ├── YES → PawaPay direct mobile-money deposit
+ │          ↓
+ │       pending_transactions
+ │          ↓
+ │       webhook and/or status polling
+ │
+ └── NO → PesaPal hosted checkout
+            ↓
+         pending_transactions
+            ↓
+         PesaPal IPN
+```
+
+This routing decision occurs server-side.
+
+Do not move payment-provider selection entirely to the client.
 
 ---
 
-# 22. VERCEL
+# 20. PAWAPAY
 
-Vercel is the deployment platform.
+PawaPay implementation:
 
-Implementation must remain compatible with Vercel.
+```text
+src/lib/pawapay.ts
+src/app/api/webhooks/pawapay/route.ts
+src/app/api/checkout/status/route.ts
+```
+
+The application currently uses PawaPay for supported mobile-money networks.
+
+The code supports country/network correspondent mappings.
+
+The PawaPay environment is selected using:
+
+```text
+PAWAPAY_ENV
+```
+
+The API token is:
+
+```text
+PAWAPAY_API_TOKEN
+```
+
+Never expose this token to the client.
+
+### CRITICAL SECURITY ISSUE
+
+The current PawaPay webhook does NOT cryptographically authenticate the incoming callback.
+
+The source code explicitly documents this gap.
+
+Therefore:
+
+**Do not describe the PawaPay webhook as production-secure until callback authentication is implemented and verified against current PawaPay documentation/dashboard capabilities.**
+
+The checkout-status polling path currently provides an additional verification mechanism, but it does not eliminate the need to secure the webhook.
+
+---
+
+# 21. PESAPAL
+
+PesaPal implementation:
+
+```text
+src/lib/pesapal.ts
+src/app/api/webhooks/pesapal/route.ts
+scripts/register-pesapal-ipn.mjs
+.github/workflows/register-pesapal-ipn.yml
+```
+
+PesaPal uses a hosted redirect checkout.
+
+The IPN URL must be registered before transactions are submitted.
+
+The resulting IPN ID is stored as:
+
+```text
+PESAPAL_IPN_ID
+```
+
+The registration workflow is manual.
+
+Do not re-register the IPN on every checkout.
+
+PesaPal authentication credentials must remain server-side.
+
+---
+
+# 22. PENDING TRANSACTIONS
+
+The table:
+
+```text
+pending_transactions
+```
+
+connects provider transaction IDs with:
+
+* user
+* email
+* product
+* plan
+* provider
+* status
+
+This exists because payment providers do not necessarily return arbitrary application metadata in a form suitable for this application's needs.
+
+Payment processing must use this mapping rather than trusting arbitrary client-provided state.
+
+---
+
+# 23. PAYMENT IDEMPOTENCY
+
+Payment completion must be idempotent.
+
+Both webhook processing and PawaPay status polling can potentially observe the same successful payment.
+
+The system is designed so that access granting uses database upserts and pending-transaction status checks.
+
+Do not remove these protections.
+
+When modifying payment processing, explicitly test duplicate webhook/callback scenarios.
+
+---
+
+# 24. ADVERTISING
+
+The frontend currently contains an ad-slot abstraction:
+
+```text
+AdSlot
+```
+
+with:
+
+```text
+data-ad-slot="infeed"
+data-ad-slot="anchor"
+```
+
+There is also a simulated video-ad unlock mechanism.
+
+These are currently application-level placeholders/abstractions, not proof of a live advertising network integration.
+
+When integrating a real advertising provider:
+
+* Preserve the existing separation.
+* Avoid embedding provider-specific logic throughout the application.
+* Keep the ad system replaceable.
+* Protect UX.
+* Do not allow ads to interfere with payment/authentication.
+* Do not falsely represent simulated ads as real advertisements.
+
+---
+
+# 25. LEGAL/PRODUCT POSITIONING
+
+The UI explicitly presents Odd Saint as AI-assisted/statistical football analysis and not a guarantee.
+
+Do not remove or weaken this positioning casually.
+
+Do not introduce language claiming:
+
+* guaranteed wins
+* guaranteed profits
+* certain outcomes
+* risk-free betting
+* guaranteed predictions
+
+unless the product/legal requirements are deliberately changed and reviewed.
+
+---
+
+# 26. GITHUB ACTIONS
+
+Current workflows:
+
+```text
+ai-self-evolution.yml
+generate-tickets.yml
+grade-tickets.yml
+register-pesapal-ipn.yml
+resolve-leagues.yml
+```
+
+Treat workflows and the scripts they execute as coupled systems.
+
+Before changing a script, inspect its workflow.
+
+Before changing a workflow, inspect the script.
 
 Consider:
 
-- Serverless execution
-- Function limits
-- Runtime behavior
-- Environment variables
-- Build process
-- Production versus preview environments
-- Long-running operations
-
-Do not assume local execution behavior is identical to Vercel production.
-
-Long-running automation should generally remain in appropriate GitHub Actions or external infrastructure rather than being forced into a Vercel request lifecycle.
+* secrets
+* permissions
+* schedules
+* Node version
+* package installation
+* generated files
+* Git commits
+* failure behavior
 
 ---
 
-# 23. GITHUB
+# 27. SELF-EVOLUTION WORKFLOW
 
-GitHub is the authoritative source-control system.
+The repository contains an automated weekly maintenance workflow.
 
-Prefer small, coherent changes.
+It has write permissions and performs repository maintenance.
 
-Do not introduce unnecessary files.
+Do not expand autonomous write capability casually.
 
-Do not commit:
+Automated evolution must remain:
 
-- Secrets
-- `.env` files
-- Build output
-- `node_modules`
-- Temporary files
-- Debug artifacts
+* reviewable
+* bounded
+* reversible
+* testable
 
-Do not recommend destructive Git commands without explaining their consequences.
+Never create an autonomous mechanism that silently deploys arbitrary unreviewed code changes to production.
 
 ---
 
-# 24. DEPENDENCY MANAGEMENT
+# 28. ENVIRONMENT VARIABLES AND SECRETS
 
-The current project has a deliberately lightweight dependency footprint.
+Never expose real secrets.
 
-Do not add dependencies unnecessarily.
+Never request users to paste secrets into chat.
 
-Before adding a package:
+Use variable names only.
 
-1. Check whether existing dependencies already provide the required functionality.
-2. Consider whether native platform functionality is sufficient.
-3. Consider security.
-4. Consider maintenance.
-5. Consider bundle size.
-6. Consider Vercel compatibility.
-7. Explain why the package is necessary.
+Known categories include:
 
----
+```text
+Supabase
+API_FOOTBALL_KEY
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
 
-# 25. CODE MODIFICATION RULES
+PawaPay
+PAWAPAY_API_TOKEN
+PAWAPAY_ENV
 
-Prefer the smallest safe change.
+PesaPal
+PESAPAL_CONSUMER_KEY
+PESAPAL_CONSUMER_SECRET
+PESAPAL_ENV
+PESAPAL_IPN_ID
+NEXT_PUBLIC_SITE_URL
+```
 
-Do not rewrite entire files when only a small section needs modification.
+Never hard-code credentials.
 
-Preserve existing behavior unless the requested change intentionally changes it.
-
-Before modifying shared functionality, determine what depends on it.
-
-Avoid:
-
-- Duplicate functions
-- Duplicate API routes
-- Duplicate database clients
-- Duplicate business rules
-- Dead code
-- Unnecessary abstractions
-- Temporary hacks becoming permanent architecture
+Never commit `.env` files containing real values.
 
 ---
 
-# 26. DEBUGGING
+# 29. VERCEL
 
-When something fails:
+Vercel is the deployment platform.
 
-Do not guess.
+Keep Next.js implementation compatible with Vercel.
 
-Use this sequence:
+Consider:
 
-1. Read the exact error.
-2. Identify the originating file.
-3. Trace the execution path.
-4. Inspect relevant configuration.
-5. Inspect dependent modules.
-6. Check database behavior.
-7. Check external API behavior.
-8. Identify the root cause.
-9. Apply the smallest appropriate fix.
-10. Verify the fix.
+* serverless execution
+* request timeouts
+* environment variables
+* server/client boundaries
+* build behavior
+* production/preview configuration
 
-Clearly distinguish:
-
-- Root cause
-- Symptom
-- Workaround
-- Permanent solution
+Do not move long-running scheduled work into a normal Vercel request if GitHub Actions is the existing appropriate execution environment.
 
 ---
 
-# 27. TESTING
+# 30. KNOWN REPOSITORY INCONSISTENCIES
 
-After significant changes, verify appropriate layers.
+The current repository contains areas that require verification before being treated as fully production-ready.
+
+### Supabase admin helper
+
+`grantAccess.ts` imports:
+
+```text
+@/lib/supabaseAdmin
+```
+
+but the current `src/lib` directory listing does not show a corresponding `supabaseAdmin.ts`.
+
+Do not assume this is harmless.
+
+Before changing payment/access code:
+
+* verify whether the file exists in another branch/location,
+* verify whether the current build resolves the alias,
+* run the build/type-check,
+* identify the actual resolution path.
+
+Do not silently fabricate a replacement.
+
+### Stale comments
+
+Some comments in the payment/access code refer to older providers such as Stripe/Flutterwave even though the current architecture uses PawaPay/PesaPal.
+
+Treat comments as potentially stale when they conflict with actual implementation.
+
+Code and current architecture take precedence.
+
+When touching affected code, update misleading comments.
+
+---
+
+# 31. MOCK DATA
+
+The frontend data layer contains deterministic mock/fallback ticket generation.
+
+Mock data is acceptable as a UI fallback but must never be presented as actual historical performance.
+
+When debugging a discrepancy between the UI and Supabase:
+
+First determine whether the UI is showing:
+
+1. Real Supabase data, or
+2. Deterministic fallback data.
+
+Do not incorrectly diagnose fallback data as a database failure.
+
+---
+
+# 32. DEVELOPMENT WORKFLOW
+
+For every significant request:
+
+### 1. INSPECT
+
+Read the relevant implementation.
+
+### 2. TRACE
+
+Determine dependencies and execution flow.
+
+### 3. PLAN
+
+Identify the smallest safe change.
+
+### 4. IMPLEMENT
+
+Modify only what is necessary.
+
+### 5. VERIFY
+
+Run appropriate tests/build/lint checks.
+
+### 6. REPORT
+
+Explain:
+
+* files changed
+* behavior changed
+* tests performed
+* known limitations
+* remaining risks
+
+---
+
+# 33. NEVER GUESS
+
+If information is available in the repository, inspect it.
+
+Do not guess:
+
+* database columns
+* API behavior
+* environment variables
+* provider behavior
+* route names
+* component names
+* workflow schedules
+* payment status semantics
+* deployment configuration
+
+If external API behavior matters, verify current official provider documentation before implementing.
+
+---
+
+# 34. SECURITY-FIRST DEVELOPMENT
+
+For every change, consider:
+
+* authentication
+* authorization
+* RLS
+* input validation
+* API abuse
+* secret exposure
+* payment manipulation
+* webhook authenticity
+* privilege escalation
+* data leakage
+* duplicate transactions
+
+Security-sensitive changes require more scrutiny than ordinary UI changes.
+
+---
+
+# 35. NO UNNECESSARY REWRITES
+
+Prefer targeted changes.
+
+Do not rewrite a large file merely to add a small feature.
+
+Do not replace functioning architecture with a new framework because it appears cleaner.
+
+Do not introduce duplicate systems.
+
+If a major refactor is genuinely necessary:
+
+1. Explain the problem.
+2. Explain the risk.
+3. Explain the proposed architecture.
+4. Identify affected files.
+5. Separate the refactor from unrelated feature work.
+
+---
+
+# 36. TESTING
+
+For significant changes, verify the appropriate layers.
 
 At minimum consider:
 
-- TypeScript correctness
-- Lint
-- Build
-- API behavior
-- Authentication behavior
-- Authorization
-- Database behavior
-- Payment behavior
-- GitHub workflow behavior
+* TypeScript
+* lint
+* production build
+* API routes
+* database queries
+* authentication
+* authorization
+* payment flows
+* webhook behavior
+* GitHub Actions
+* external API failures
 
-Do not claim that something passed if it was not actually tested.
+For payment changes specifically test:
 
----
-
-# 28. DATABASE CHANGES
-
-When changing the database:
-
-- Update the authoritative schema/migration.
-- Check application queries.
-- Check dependent APIs.
-- Check RLS.
-- Check existing data.
-- Check backwards compatibility.
-
-Never make an undocumented database change.
+* valid payment
+* rejected payment
+* failed payment
+* duplicate callback
+* repeated polling
+* missing transaction
+* invalid plan
+* invalid product
+* invalid country/network
 
 ---
 
-# 29. API DESIGN
+# 37. DOCUMENTATION
 
-API routes should:
+Important architectural decisions should be documented in the repository.
 
-- Validate inputs
-- Validate authorization
-- Return appropriate HTTP status codes
-- Handle errors
-- Avoid leaking internal information
-- Avoid exposing secrets
-- Use consistent response structures
-- Prevent duplicate operations where relevant
+Do not rely on a long Claude conversation as the permanent source of truth.
 
-Business logic should not be unnecessarily duplicated between API routes and UI components.
+When an important design decision becomes permanent, update:
+
+* README
+* relevant technical documentation
+* CLAUDE.md when it affects how Claude should work
 
 ---
 
-# 30. UI/UX
+# 38. FUTURE AI/PREDICTION ENGINE
 
-Preserve the existing visual and interaction architecture unless the task explicitly requires redesign.
+If the prediction system evolves beyond bookmaker-odds heuristics into a genuine AI/ML model:
 
-For asynchronous operations, provide appropriate:
+* Clearly separate the model from the current heuristic system.
+* Document the data source.
+* Document training methodology.
+* Document evaluation methodology.
+* Track model versioning.
+* Avoid data leakage.
+* Avoid claiming predictive accuracy without evidence.
+* Preserve reproducibility where possible.
 
-- Loading states
-- Success states
-- Error states
-- Empty states
-- Recovery paths
-
-Maintain responsive behavior and accessibility.
-
----
-
-# 31. PRODUCTION READINESS
-
-Never describe a feature as production-ready merely because it works in one test.
-
-Before considering a feature production-ready, evaluate:
-
-- Security
-- Error handling
-- Database integrity
-- Authentication
-- Authorization
-- External integrations
-- Environment configuration
-- Performance
-- Failure recovery
-- Deployment compatibility
-- User experience
+Do not call a heuristic an AI model merely for marketing purposes.
 
 ---
 
-# 32. HANDLING FUTURE DEVELOPMENT
+# 39. PRODUCT EVOLUTION
 
-OddSaint is expected to evolve substantially.
+Future development should aim toward:
 
-When implementing new functionality:
+* reliable football data
+* stronger prediction methodology
+* transparent performance measurement
+* scalable ticket generation
+* robust payment processing
+* secure user access
+* meaningful analytics
+* advertiser readiness
+* strong user experience
+* maintainable architecture
 
-1. Understand the current architecture.
-2. Determine where the functionality belongs.
-3. Prefer extension over duplication.
-4. Keep modules loosely coupled.
-5. Preserve future scalability.
-6. Avoid premature complexity.
-7. Document important architectural decisions.
-
-Do not build future features based solely on historical conversations.
-
-Use the current repository as the foundation.
-
----
-
-# 33. WHEN THE USER REQUESTS A CHANGE
-
-Follow this sequence:
-
-### ANALYZE
-
-Inspect the current implementation.
-
-### PLAN
-
-Explain what needs to change and why.
-
-### IMPLEMENT
-
-Make the smallest coherent change.
-
-### VERIFY
-
-Check affected functionality.
-
-### REPORT
-
-State:
-
-- Files changed
-- What changed
-- Why it changed
-- What was verified
-- Any remaining limitations
-
-If the task is sufficiently clear and safe, do not repeatedly ask for confirmation for trivial implementation details.
+However, do not add complexity without a concrete product or technical justification.
 
 ---
 
-# 34. DO NOT INVENT IMPLEMENTATION STATUS
+# 40. FINAL RULE
 
-If something is:
+OddSaint must be treated as one interconnected production system.
 
-- Stubbed — say it is stubbed.
-- Mocked — say it is mocked.
-- Placeholder — say it is a placeholder.
-- Partially implemented — say it is partial.
-- Production-ready — only say so after verification.
+Always think in terms of:
 
-Do not present planned functionality as existing functionality.
+```text
+Frontend
+   ↓
+Data layer
+   ↓
+API
+   ↓
+Business logic
+   ↓
+Supabase
+   ↓
+External providers
 
----
+and
 
-# 35. ARCHITECTURAL CONFLICTS
+GitHub Actions
+   ↓
+External football data
+   ↓
+Ticket generation
+   ↓
+Supabase
+   ↓
+Frontend
+   ↓
+Grading
+   ↓
+Performance history
+```
 
-If a requested change conflicts with the current architecture:
+Before making a change, determine where it sits in these flows and what depends on it.
 
-1. Identify the conflict.
-2. Explain the consequences.
-3. Recommend the safest approach.
-4. Do not silently introduce a second architecture.
-
-If a major refactor is necessary, separate it from ordinary feature work.
-
----
-
-# 36. PROJECT EVOLUTION
-
-The project should progressively become:
-
-- More reliable
-- More secure
-- More automated
-- More observable
-- More scalable
-- More maintainable
-- More data-driven
-- More commercially viable
-
-However, do not add complexity merely because it sounds sophisticated.
-
-Every architectural addition must have a concrete purpose.
-
----
-
-# 37. DOCUMENTATION RULE
-
-When an important architectural decision is made, update the appropriate project documentation.
-
-Do not rely on chat history as the permanent source of truth.
-
-Important knowledge should eventually exist in the repository.
-
----
-
-# 38. FINAL OPERATING PRINCIPLE
-
-Treat OddSaint as a production system.
-
-Always:
+## GOLDEN RULE
 
 **Inspect → Understand → Plan → Implement → Test → Document**
 
 Never:
 
-**Guess → Rewrite → Hope**
-
-The current GitHub repository is the authoritative implementation.
-
-The goal is not merely to make individual features work.
-
-The goal is to continuously improve the entire OddSaint system without creating architectural drift, security weaknesses, unnecessary complexity, or technical debt.
+**Guess → Rewrite → Assume → Deploy**
