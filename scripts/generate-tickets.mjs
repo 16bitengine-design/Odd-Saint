@@ -120,10 +120,10 @@ const TIER_CONFIG = [
   { tier: 'bronze', label: 'Bronze', matchCount: 3, oddsRange: '2-3', alwaysFree: false },
   { tier: 'silver', label: 'Silver', matchCount: 5, oddsRange: '3-5', alwaysFree: false },
   { tier: 'gold', label: 'Gold', matchCount: 7, oddsRange: '5-10', alwaysFree: false },
-  { tier: 'platinum', label: 'Platinum', matchCount: 10, oddsRange: '25-300', alwaysFree: false },
-  { tier: 'diamond', label: 'Diamond', matchCount: 15, oddsRange: '300+', alwaysFree: false },
-  { tier: 'weekly_lite', label: 'Weekly Lite', matchCount: 20, oddsRange: 'Mixed', alwaysFree: false },
-  { tier: 'weekly_titan', label: 'Weekly Titan', matchCount: 30, oddsRange: 'Mixed', alwaysFree: false },
+  { tier: 'platinum', label: 'Platinum', matchCount: 9, oddsRange: '25-300', alwaysFree: false },
+  { tier: 'diamond', label: 'Diamond', matchCount: 14, oddsRange: '300+', alwaysFree: false },
+  { tier: 'weekly_lite', label: 'Weekly Lite', matchCount: 19, oddsRange: 'Mixed', alwaysFree: false },
+  { tier: 'weekly_titan', label: 'Weekly Titan', matchCount: 29, oddsRange: 'Mixed', alwaysFree: false },
   // Single-match, ultra-high-confidence category. Only ever one match —
   // the single most confident pick available that day, and only ever
   // included if it clears SAINTS_LOCK_MIN_CONFIDENCE (see below), well
@@ -353,9 +353,20 @@ function computeTotalOdds(picks) {
  * get reasonably close even after swapping, the slip is dropped rather
  * than shipped mislabeled.
  */
-function pickFixturesForSlip(pool, matchCount, usageCount, targetRange) {
+/**
+ * Picks fixtures for one slip using the FEWEST legs needed to reach the
+ * tier's minimum target odds — starting from the safest available fixtures
+ * and adding one at a time, stopping the moment the cumulative total lands
+ * in range. `maxMatchCount` is a CEILING now, not a fixed requirement:
+ * fewer legs at the same target odds means less compounded bookmaker
+ * margin (every leg carries the house edge, and it multiplies) and fewer
+ * independent things that can go wrong — so this deliberately favors using
+ * as few legs as will actually get the job done, only adding more when
+ * the safest legs alone can't reach the target.
+ */
+function pickFixturesForSlip(pool, maxMatchCount, usageCount, targetRange) {
   const eligible = pool.filter((f) => (usageCount.get(f.fixtureId) ?? 0) < MAX_FIXTURE_APPEARANCES_PER_DAY);
-  if (eligible.length < matchCount) return [];
+  if (eligible.length === 0) return [];
 
   const ranked = [...eligible].sort((a, b) => {
     const usedA = usageCount.get(a.fixtureId) ?? 0;
@@ -364,39 +375,72 @@ function pickFixturesForSlip(pool, matchCount, usageCount, targetRange) {
     return a.odds - b.odds; // then safest first
   });
 
-  let picks = ranked.slice(0, matchCount);
-  let unused = ranked.slice(matchCount);
-
-  if (targetRange) {
-    const [minTotal, maxTotal] = targetRange;
-    const MAX_SWAP_ATTEMPTS = 8;
-
-    for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
-      const total = computeTotalOdds(picks);
-      if (total >= minTotal && total <= maxTotal) break;
-
-      if (total < minTotal) {
-        // Swap out the lowest-odds pick for a higher-odds unused fixture, to raise the total.
-        const lowestIdx = picks.reduce((li, p, i) => (p.odds < picks[li].odds ? i : li), 0);
-        const candidate = unused.find((f) => f.odds > picks[lowestIdx].odds);
-        if (!candidate) break; // nothing left that would raise the total further
-        picks[lowestIdx] = candidate;
-        unused = unused.filter((f) => f !== candidate);
-      } else {
-        // Swap out the highest-odds pick for a lower-odds unused fixture, to bring the total down.
-        const highestIdx = picks.reduce((hi, p, i) => (p.odds > picks[hi].odds ? i : hi), 0);
-        const candidate = [...unused].sort((a, b) => a.odds - b.odds).find((f) => f.odds < picks[highestIdx].odds);
-        if (!candidate) break;
-        picks[highestIdx] = candidate;
-        unused = unused.filter((f) => f !== candidate);
-      }
-    }
-
-    const finalTotal = computeTotalOdds(picks);
-    const TOLERANCE = 0.3; // 30% slack either side of the target band
-    const withinTolerance = finalTotal >= minTotal * (1 - TOLERANCE) && finalTotal <= maxTotal * (1 + TOLERANCE);
-    if (!withinTolerance) return []; // pool doesn't have enough spread to hit this tier's range today
+  if (!targetRange) {
+    // No target range to hit (Weekly Lite/Titan, "Mixed") — just take the
+    // safest available up to the max, as before.
+    if (ranked.length < maxMatchCount) return [];
+    return ranked.slice(0, maxMatchCount);
   }
+
+  const [minTotal, maxTotal] = targetRange;
+
+  // Greedily add the safest legs one at a time, stopping as soon as the
+  // cumulative total reaches the target range.
+  let picks = [];
+  let unused = [...ranked];
+
+  for (const fixture of ranked) {
+    if (picks.length >= maxMatchCount) break;
+    picks.push(fixture);
+    unused = unused.filter((f) => f !== fixture);
+
+    const total = computeTotalOdds(picks);
+    if (total >= minTotal && total <= maxTotal) {
+      return picks; // hit the target with this many legs — stop here
+    }
+    if (total > maxTotal) {
+      // Overshot on the safest-first path (can happen with a wide odds
+      // spread) — back this addition out and fall through to the swap
+      // logic below instead of just continuing to pile on legs.
+      picks.pop();
+      unused.unshift(fixture);
+      break;
+    }
+  }
+
+  // Safest legs alone (within the max leg cap) didn't reach minTotal —
+  // add more legs if there's still room, then fall back to swapping
+  // weaker-for-stronger legs to close the gap.
+  const MAX_SWAP_ATTEMPTS = 8;
+  for (let attempt = 0; attempt < MAX_SWAP_ATTEMPTS; attempt++) {
+    const total = computeTotalOdds(picks);
+    if (total >= minTotal && total <= maxTotal) break;
+
+    if (total < minTotal) {
+      if (picks.length < maxMatchCount && unused.length > 0) {
+        const next = [...unused].sort((a, b) => a.odds - b.odds)[0];
+        picks.push(next);
+        unused = unused.filter((f) => f !== next);
+        continue;
+      }
+      const lowestIdx = picks.reduce((li, p, i) => (p.odds < picks[li].odds ? i : li), 0);
+      const candidate = unused.find((f) => f.odds > picks[lowestIdx].odds);
+      if (!candidate) break; // nothing left that would raise the total further
+      picks[lowestIdx] = candidate;
+      unused = unused.filter((f) => f !== candidate);
+    } else {
+      const highestIdx = picks.reduce((hi, p, i) => (p.odds > picks[hi].odds ? i : hi), 0);
+      const candidate = [...unused].sort((a, b) => a.odds - b.odds).find((f) => f.odds < picks[highestIdx].odds);
+      if (!candidate) break;
+      picks[highestIdx] = candidate;
+      unused = unused.filter((f) => f !== candidate);
+    }
+  }
+
+  const finalTotal = computeTotalOdds(picks);
+  const TOLERANCE = 0.3; // 30% slack either side of the target band
+  const withinTolerance = finalTotal >= minTotal * (1 - TOLERANCE) && finalTotal <= maxTotal * (1 + TOLERANCE);
+  if (!withinTolerance || picks.length === 0) return []; // pool doesn't have enough spread to hit this tier's range today
 
   return picks;
 }
@@ -421,19 +465,35 @@ function buildSaintsLockTickets(dailyPool, usageCount, today) {
   const [minOdds, maxOdds] = TIER_ODDS_TARGET.saints_lock;
   const maxTickets = getDailySlipCount('saints_lock', dailyPool.length, new Date());
 
-  const qualifying = dailyPool
-    .filter((p) => {
-      const used = usageCount.get(p.fixtureId) ?? 0;
-      return (
-        used < MAX_FIXTURE_APPEARANCES_PER_DAY &&
-        p.odds >= minOdds &&
-        p.odds <= maxOdds &&
-        p.confidence >= SAINTS_LOCK_MIN_CONFIDENCE
-      );
-    })
+  const inOddsRange = (p) => {
+    const used = usageCount.get(p.fixtureId) ?? 0;
+    return used < MAX_FIXTURE_APPEARANCES_PER_DAY && p.odds >= minOdds && p.odds <= maxOdds;
+  };
+
+  let qualifying = dailyPool
+    .filter((p) => inOddsRange(p) && p.confidence >= SAINTS_LOCK_MIN_CONFIDENCE)
     .sort((a, b) => b.confidence - a.confidence);
 
-  const chosen = qualifying.slice(0, maxTickets);
+  // Minimum 1/day guarantee: if nothing clears the strict 85% bar, relax to
+  // the single best-available fixture in the odds range rather than
+  // shipping zero. Still quality-first — this only ever produces ONE
+  // ticket at the relaxed bar, never a second one, since a second slot at
+  // reduced confidence would defeat the "next to impossible" positioning.
+  let usedFallback = false;
+  if (qualifying.length === 0) {
+    const fallback = dailyPool.filter(inOddsRange).sort((a, b) => b.confidence - a.confidence);
+    if (fallback.length > 0) {
+      qualifying = [fallback[0]];
+      usedFallback = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Saint's Lock: no fixture cleared ${SAINTS_LOCK_MIN_CONFIDENCE}% today — ` +
+          `using best available (${fallback[0].confidence}%) to meet the minimum-1-per-day guarantee.`
+      );
+    }
+  }
+
+  const chosen = qualifying.slice(0, usedFallback ? 1 : maxTickets);
   const tickets = [];
   const ticketMatches = [];
   const fixturesUsed = [];
@@ -488,7 +548,7 @@ function buildTickets(dailyPool, weeklyPool) {
 
     for (let i = 0; i < count; i++) {
       const picks = pickFixturesForSlip(pool, config.matchCount, usageCount, targetRange);
-      if (picks.length < config.matchCount) continue; // not enough diverse, high-confidence fixtures today — skip this slip rather than force it
+      if (picks.length === 0) continue; // couldn't assemble a valid combination today — skip this slip rather than force it
 
       picks.forEach((p) => {
         fixturesUsed.set(p.fixtureId, p);
@@ -504,7 +564,7 @@ function buildTickets(dailyPool, weeklyPool) {
         ticket_date: today,
         tier: config.tier,
         slip_label: slipLabel,
-        match_count: config.matchCount,
+        match_count: picks.length, // actual legs used — may be fewer than config.matchCount's ceiling
         odds_range: config.oddsRange,
         total_odds: totalOdds,
         is_free: config.alwaysFree,
